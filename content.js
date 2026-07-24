@@ -1,9 +1,16 @@
-// Extracts key fields from an Odoo subscription form page.
+// Extracts key fields from an Odoo subscription form page. Injected on
+// demand via chrome.scripting (see sidepanel.js) rather than declared as a
+// static content script, since Odoo is usually self-hosted on a customer's
+// own domain rather than odoo.com.
+//
 // Odoo's web client renders each field as a labeled row: a label element
 // (class o_form_label, or a <label>) followed by a value element
 // (class o_field_widget) within the same o_row/o_cell container. We match
 // on label text rather than fixed selectors since Odoo studio customizations
 // can change field order.
+
+if (!window.__channelCopilotInjected) {
+window.__channelCopilotInjected = true;
 
 const LABELS = [
   "Customer",
@@ -97,3 +104,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return true;
 });
+
+} // window.__channelCopilotInjected guard

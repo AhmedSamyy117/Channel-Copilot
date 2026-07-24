@@ -37,10 +37,20 @@ async function extractFromActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab.");
 
+  if (!/^https?:/.test(tab.url || "")) {
+    throw new Error("This isn't a regular web page. Open your Odoo subscription page and reopen the panel.");
+  }
+
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+  } catch (err) {
+    throw new Error("Couldn't access this page. Reopen the panel from the Odoo tab you want to read.");
+  }
+
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_ODOO_DATA" }, (response) => {
       if (chrome.runtime.lastError) {
-        reject(new Error("Could not read this page. Open an Odoo subscription page and reopen the panel."));
+        reject(new Error("Could not read this page. Reopen the panel from the Odoo subscription page."));
         return;
       }
       if (!response?.ok) {
