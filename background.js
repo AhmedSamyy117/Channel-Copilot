@@ -6,12 +6,19 @@ const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-5";
 const MAX_SEARCHES = 3;
 
-function buildPrompt({ customerName, country }) {
+function buildPrompt({ customerName, country, domain }) {
+  const researchStep = domain
+    ? `Step 1: Research the company that owns the domain "${domain}" using web search. This should usually be your only search.
+Step 2: Only spend a second search on the company name ("${customerName}")${country ? `, scoped to ${country}` : ""} if the domain search comes up completely empty (parked domain, unrelated site, no real company found at all) — not just because some fields are still unfilled.`
+    : `Research the company "${customerName}"${country ? `, based in ${country}` : ""}. No verified company domain was available (its CRM contact record has no email/website on file), so search by name directly.`;
+
   return `You are helping a Partnership Manager complete a lightweight KYC (Know Your Customer) profile on a business customer, using real web search results.
 
 You have a hard budget of ${MAX_SEARCHES} web searches total for this whole task — spend them deliberately, don't burn one on anything you can leave as "Not found".
 
-Research the company "${customerName}"${country ? `, based in ${country}` : ""}. Use web search to find its industry, founding year, employee count, and any parent/holding company or sister companies. If results mention a parent/holding group or sister companies, note them, but do not spend a dedicated extra search hunting for this — if it didn't come up naturally, list "None found".
+${researchStep}
+
+Use web search to find the company's industry, founding year, employee count, and any parent/holding company or sister companies. If results mention a parent/holding group or sister companies, note them, but do not spend a dedicated extra search hunting for this — if it didn't come up naturally, list "None found".
 
 Respond with ONLY the following, filled in, and nothing else before or after — no headers other than what's shown, no extra commentary, no other markdown formatting:
 
@@ -35,7 +42,7 @@ function extractFinalText(messageContent) {
   return textBlocks.map((b) => b.text).join("\n").trim();
 }
 
-async function runKyc({ customerName, country }, apiKey, model) {
+async function runKyc({ customerName, country, domain }, apiKey, model) {
   const response = await fetch(ANTHROPIC_API_URL, {
     method: "POST",
     headers: {
@@ -57,7 +64,7 @@ async function runKyc({ customerName, country }, apiKey, model) {
       messages: [
         {
           role: "user",
-          content: buildPrompt({ customerName, country }),
+          content: buildPrompt({ customerName, country, domain }),
         },
       ],
     }),

@@ -15,6 +15,35 @@ const customerNameInput = document.getElementById("customerNameInput");
 const customerCountryInput = document.getElementById("customerCountryInput");
 
 let extracted = null;
+let activeTabId = null;
+
+function domainFromContactInfo(info) {
+  if (!info) return null;
+  if (info.website) {
+    try {
+      const url = new URL(/^https?:\/\//i.test(info.website) ? info.website : `https://${info.website}`);
+      return url.hostname.replace(/^www\./i, "");
+    } catch (err) {
+      // fall through to email
+    }
+  }
+  if (info.email && info.email.includes("@")) {
+    return info.email.split("@")[1].trim();
+  }
+  return null;
+}
+
+function fetchPartnerInfoFromTab(tabId, customerName) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_PARTNER_INFO", customerName }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        resolve(null);
+        return;
+      }
+      resolve(response.info);
+    });
+  });
+}
 
 function updateKycButtonState() {
   kycBtn.disabled = !customerNameInput.value.trim();
@@ -42,6 +71,7 @@ function renderFields(data) {
 async function extractFromActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab.");
+  activeTabId = tab.id;
 
   if (!/^https?:/.test(tab.url || "")) {
     throw new Error("This isn't a regular web page. Open your Odoo subscription page and reopen the panel.");
@@ -85,14 +115,22 @@ async function init() {
   }
 }
 
-kycBtn.addEventListener("click", () => {
+kycBtn.addEventListener("click", async () => {
   const customerName = customerNameInput.value.trim();
   if (!customerName) return;
 
   kycBtn.disabled = true;
-  kycBtn.textContent = "Researching…";
+  kycBtn.textContent = "Looking up contact record…";
   errorEl.style.display = "none";
   kycResultEl.style.display = "none";
+
+  const partnerInfo = activeTabId ? await fetchPartnerInfoFromTab(activeTabId, customerName) : null;
+  const domain = domainFromContactInfo(partnerInfo);
+
+  statusEl.textContent = domain
+    ? `Found domain "${domain}" on the contact record — researching by domain.`
+    : "No domain on the contact record — researching by company name only.";
+  kycBtn.textContent = "Researching…";
 
   chrome.runtime.sendMessage(
     {
@@ -100,6 +138,7 @@ kycBtn.addEventListener("click", () => {
       payload: {
         customerName,
         country: customerCountryInput.value.trim(),
+        domain,
       },
     },
     (response) => {

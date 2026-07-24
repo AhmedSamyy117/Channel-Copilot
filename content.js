@@ -169,11 +169,48 @@ function extractAll() {
   };
 }
 
+// Looks up the customer's contact record through Odoo's own backend API
+// (same-origin JSON-RPC, reuses the logged-in session) rather than scraping
+// the page, since the visible text rarely shows the company's email/site.
+async function fetchPartnerContactInfo(customerName) {
+  try {
+    const res = await fetch(`${location.origin}/web/dataset/call_kw`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "call",
+        params: {
+          model: "res.partner",
+          method: "search_read",
+          args: [[["name", "=", customerName]], ["name", "email", "website"]],
+          kwargs: { limit: 1 },
+        },
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const partner = json && json.result && json.result[0];
+    if (!partner) return null;
+    return { email: partner.email || null, website: partner.website || null };
+  } catch (err) {
+    return null;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "EXTRACT_ODOO_DATA") {
     sendResponse({ ok: true, data: extractAll() });
+    return true;
   }
-  return true;
+  if (message?.type === "FETCH_PARTNER_INFO") {
+    fetchPartnerContactInfo(message.customerName).then((info) => {
+      sendResponse({ ok: true, info });
+    });
+    return true; // async response
+  }
+  return false;
 });
 
 } // window.__channelCopilotInjected guard
