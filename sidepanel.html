@@ -27,6 +27,30 @@
     font-size: 13px;
     word-break: break-word;
   }
+  .editable {
+    margin-bottom: 10px;
+  }
+  .editable label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+    margin-bottom: 3px;
+  }
+  .editable input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+  }
+  .hint {
+    font-size: 11px;
+    color: #6b7280;
+    margin: -4px 0 12px;
+  }
   button {
     width: 100%;
     padding: 8px 12px;
@@ -67,6 +91,15 @@
 <body>
   <h1>Channel Copilot</h1>
   <div id="status">Reading page…</div>
+  <div class="editable">
+    <label for="customerNameInput">Customer name</label>
+    <input id="customerNameInput" type="text" placeholder="Not read from page — type it in" />
+  </div>
+  <div class="editable">
+    <label for="customerCountryInput">Country</label>
+    <input id="customerCountryInput" type="text" placeholder="Not read from page — type it in" />
+  </div>
+  <div class="hint">Extraction from Odoo is best-effort — check/fix these before researching.</div>
   <div id="fields"></div>
   <button id="kycBtn" disabled>Research KYC</button>
   <div id="error"></div>

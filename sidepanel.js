@@ -1,6 +1,4 @@
 const FIELD_LABELS = {
-  customerName: "Customer",
-  customerCountry: "Country (guess)",
   subscriptionCode: "Subscription code",
   recurringPlan: "Recurring plan",
   hosting: "Hosting",
@@ -13,8 +11,16 @@ const fieldsEl = document.getElementById("fields");
 const kycBtn = document.getElementById("kycBtn");
 const errorEl = document.getElementById("error");
 const kycResultEl = document.getElementById("kycResult");
+const customerNameInput = document.getElementById("customerNameInput");
+const customerCountryInput = document.getElementById("customerCountryInput");
 
 let extracted = null;
+
+function updateKycButtonState() {
+  kycBtn.disabled = !customerNameInput.value.trim();
+}
+
+customerNameInput.addEventListener("input", updateKycButtonState);
 
 function showError(message) {
   errorEl.textContent = message;
@@ -66,18 +72,22 @@ async function init() {
   try {
     extracted = await extractFromActiveTab();
     renderFields(extracted);
+    customerNameInput.value = extracted.customerName || "";
+    customerCountryInput.value = extracted.customerCountry || "";
     statusEl.textContent = extracted.customerName
-      ? `Loaded data for ${extracted.customerName}`
-      : "Loaded page, but no customer field found.";
-    kycBtn.disabled = !extracted.customerName;
+      ? "Loaded from page — double-check the fields above before researching."
+      : "Loaded page, but couldn't find the customer name — please type it in.";
   } catch (err) {
     statusEl.textContent = "";
     showError(err.message);
+  } finally {
+    updateKycButtonState();
   }
 }
 
 kycBtn.addEventListener("click", () => {
-  if (!extracted?.customerName) return;
+  const customerName = customerNameInput.value.trim();
+  if (!customerName) return;
 
   kycBtn.disabled = true;
   kycBtn.textContent = "Researching…";
@@ -88,8 +98,8 @@ kycBtn.addEventListener("click", () => {
     {
       type: "RUN_KYC",
       payload: {
-        customerName: extracted.customerName,
-        country: extracted.customerCountry,
+        customerName,
+        country: customerCountryInput.value.trim(),
       },
     },
     (response) => {
