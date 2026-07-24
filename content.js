@@ -171,8 +171,9 @@ function extractAll() {
 
 // Looks up the customer's contact record through Odoo's own backend API
 // (same-origin JSON-RPC, reuses the logged-in session) rather than scraping
-// the page, since the visible text rarely shows the company's email/site.
-async function fetchPartnerContactInfo(customerName) {
+// the page — this is the authoritative source for name/country/email/site,
+// since page text scraping has proven unreliable across Odoo layouts.
+async function odooRpc(model, method, args, kwargs) {
   try {
     const res = await fetch(`${location.origin}/web/dataset/call_kw`, {
       method: "POST",
@@ -181,22 +182,95 @@ async function fetchPartnerContactInfo(customerName) {
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "call",
-        params: {
-          model: "res.partner",
-          method: "search_read",
-          args: [[["name", "=", customerName]], ["name", "email", "website"]],
-          kwargs: { limit: 1 },
-        },
+        params: { model, method, args, kwargs: kwargs || {} },
       }),
     });
     if (!res.ok) return null;
     const json = await res.json();
-    const partner = json && json.result && json.result[0];
-    if (!partner) return null;
-    return { email: partner.email || null, website: partner.website || null };
+    if (json.error) return null;
+    return json.result;
   } catch (err) {
     return null;
   }
+}
+
+// Odoo 17+ uses URLs like /odoo/<action>/<id>; older web clients use
+// hash routing like #id=123&model=sale.order&view_type=form.
+function getRecordContext() {
+  const pathMatch = location.pathname.match(/\/(\d+)(?:[/?]|$)/);
+  if (pathMatch) return { id: parseInt(pathMatch[1], 10), model: null };
+
+  const hash = location.hash || "";
+  const idMatch = hash.match(/[#&]id=(\d+)/);
+  if (idMatch) {
+    const modelMatch = hash.match(/[#&]model=([a-zA-Z_.]+)/);
+    return { id: parseInt(idMatch[1], 10), model: modelMatch ? modelMatch[1] : null };
+  }
+  return null;
+}
+
+// The Subscriptions app has lived on different models across Odoo versions.
+const ORDER_MODEL_CANDIDATES = ["sale.order", "sale.subscription"];
+
+async function fetchOrderPartnerRef(ctx) {
+  const models = ctx.model ? [ctx.model] : ORDER_MODEL_CANDIDATES;
+  for (const model of models) {
+    const rows = await odooRpc(
+      model,
+      "search_read",
+      [[["id", "=", ctx.id]], ["name", "partner_id"]],
+      { limit: 1 }
+    );
+    if (rows && rows.length && rows[0].partner_id) return rows[0];
+  }
+  return null;
+}
+
+async function fetchPartnerDetails(partnerId) {
+  const rows = await odooRpc(
+    "res.partner",
+    "search_read",
+    [[["id", "=", partnerId]], ["name", "email", "website", "country_id"]],
+    { limit: 1 }
+  );
+  return rows && rows[0] ? rows[0] : null;
+}
+
+// Falls back to a name-based lookup only if we couldn't resolve the current
+// record's id (e.g. an unrecognized URL scheme).
+async function fetchPartnerByName(customerName) {
+  const rows = await odooRpc(
+    "res.partner",
+    "search_read",
+    [[["name", "=", customerName]], ["name", "email", "website", "country_id"]],
+    { limit: 1 }
+  );
+  return rows && rows[0] ? rows[0] : null;
+}
+
+async function fetchCustomerRecordInfo(fallbackName) {
+  const ctx = getRecordContext();
+  let partner = null;
+
+  if (ctx) {
+    const orderRef = await fetchOrderPartnerRef(ctx);
+    if (orderRef && orderRef.partner_id) {
+      partner = await fetchPartnerDetails(orderRef.partner_id[0]);
+    }
+  }
+
+  if (!partner && fallbackName) {
+    partner = await fetchPartnerByName(fallbackName);
+  }
+
+  if (!partner) return null;
+
+  return {
+    name: partner.name || null,
+    email: partner.email || null,
+    website: partner.website || null,
+    country: Array.isArray(partner.country_id) ? partner.country_id[1] : null,
+  };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -204,8 +278,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true, data: extractAll() });
     return true;
   }
-  if (message?.type === "FETCH_PARTNER_INFO") {
-    fetchPartnerContactInfo(message.customerName).then((info) => {
+  if (message?.type === "FETCH_CUSTOMER_RECORD") {
+    fetchCustomerRecordInfo(message.fallbackName).then((info) => {
       sendResponse({ ok: true, info });
     });
     return true; // async response

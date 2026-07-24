@@ -13,9 +13,13 @@ const errorEl = document.getElementById("error");
 const kycResultEl = document.getElementById("kycResult");
 const customerNameInput = document.getElementById("customerNameInput");
 const customerCountryInput = document.getElementById("customerCountryInput");
+const domainRow = document.getElementById("domainRow");
+const domainValueEl = document.getElementById("domainValue");
+const sourceHintEl = document.getElementById("sourceHint");
 
 let extracted = null;
 let activeTabId = null;
+let detectedDomain = null;
 
 function domainFromContactInfo(info) {
   if (!info) return null;
@@ -33,9 +37,9 @@ function domainFromContactInfo(info) {
   return null;
 }
 
-function fetchPartnerInfoFromTab(tabId, customerName) {
+function fetchCustomerRecordFromTab(tabId, fallbackName) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { type: "FETCH_PARTNER_INFO", customerName }, (response) => {
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_CUSTOMER_RECORD", fallbackName }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         resolve(null);
         return;
@@ -102,11 +106,34 @@ async function init() {
   try {
     extracted = await extractFromActiveTab();
     renderFields(extracted);
+    // Prefill from page-scraping first (best-effort), then try to overwrite
+    // with the authoritative record from Odoo's own API below.
     customerNameInput.value = extracted.customerName || "";
     customerCountryInput.value = extracted.customerCountry || "";
-    statusEl.textContent = extracted.customerName
-      ? "Loaded from page — double-check the fields above before researching."
-      : "Loaded page, but couldn't find the customer name — please type it in.";
+    statusEl.textContent = "Loaded from page — looking up the contact record for authoritative details…";
+
+    const record = activeTabId
+      ? await fetchCustomerRecordFromTab(activeTabId, extracted.customerName)
+      : null;
+
+    if (record) {
+      if (record.name) customerNameInput.value = record.name;
+      if (record.country) customerCountryInput.value = record.country;
+      detectedDomain = domainFromContactInfo(record);
+      if (detectedDomain) {
+        domainRow.style.display = "block";
+        domainValueEl.textContent = detectedDomain;
+      }
+      sourceHintEl.textContent = "Name/country pulled from the Odoo contact record — still editable if wrong.";
+      statusEl.textContent = detectedDomain
+        ? `Loaded. Will research by domain "${detectedDomain}".`
+        : "Loaded. No email/website on the contact record — will research by name only.";
+    } else {
+      sourceHintEl.textContent = "Couldn't reach the contact record — these are page-scraped guesses. Check/fix before researching.";
+      statusEl.textContent = extracted.customerName
+        ? "Loaded from page (best-effort) — double-check the fields above."
+        : "Loaded page, but couldn't find the customer name — please type it in.";
+    }
   } catch (err) {
     statusEl.textContent = "";
     showError(err.message);
@@ -115,22 +142,14 @@ async function init() {
   }
 }
 
-kycBtn.addEventListener("click", async () => {
+kycBtn.addEventListener("click", () => {
   const customerName = customerNameInput.value.trim();
   if (!customerName) return;
 
   kycBtn.disabled = true;
-  kycBtn.textContent = "Looking up contact record…";
+  kycBtn.textContent = "Researching…";
   errorEl.style.display = "none";
   kycResultEl.style.display = "none";
-
-  const partnerInfo = activeTabId ? await fetchPartnerInfoFromTab(activeTabId, customerName) : null;
-  const domain = domainFromContactInfo(partnerInfo);
-
-  statusEl.textContent = domain
-    ? `Found domain "${domain}" on the contact record — researching by domain.`
-    : "No domain on the contact record — researching by company name only.";
-  kycBtn.textContent = "Researching…";
 
   chrome.runtime.sendMessage(
     {
@@ -138,7 +157,7 @@ kycBtn.addEventListener("click", async () => {
       payload: {
         customerName,
         country: customerCountryInput.value.trim(),
-        domain,
+        domain: detectedDomain,
       },
     },
     (response) => {
