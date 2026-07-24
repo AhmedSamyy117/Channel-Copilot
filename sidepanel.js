@@ -14,12 +14,14 @@ const kycResultEl = document.getElementById("kycResult");
 const customerNameInput = document.getElementById("customerNameInput");
 const customerCountryInput = document.getElementById("customerCountryInput");
 const domainRow = document.getElementById("domainRow");
-const domainValueEl = document.getElementById("domainValue");
+const domainInput = document.getElementById("domainInput");
 const sourceHintEl = document.getElementById("sourceHint");
+const contactCardEl = document.getElementById("contactCard");
+const internalResultEl = document.getElementById("internalResult");
 
 let extracted = null;
 let activeTabId = null;
-let detectedDomain = null;
+let contextText = "";
 
 function domainFromContactInfo(info) {
   if (!info) return null;
@@ -119,15 +121,28 @@ async function init() {
     if (record) {
       if (record.name) customerNameInput.value = record.name;
       if (record.country) customerCountryInput.value = record.country;
-      detectedDomain = domainFromContactInfo(record);
-      if (detectedDomain) {
-        domainRow.style.display = "block";
-        domainValueEl.textContent = detectedDomain;
+
+      const detectedDomain = domainFromContactInfo(record);
+      domainRow.style.display = "block";
+      domainInput.value = detectedDomain || "";
+
+      contextText = record.contextText || "";
+
+      if (record.contacts && record.contacts.length) {
+        const c = record.contacts[0];
+        contactCardEl.style.display = "block";
+        contactCardEl.innerHTML = `
+          <div class="name">${c.name || "Contact"}</div>
+          ${c.function ? `<div>${c.function}</div>` : ""}
+          ${c.email ? `<div>${c.email}</div>` : ""}
+          ${c.phone || c.mobile ? `<div>${[c.phone, c.mobile].filter(Boolean).join(" / ")}</div>` : ""}
+        `;
       }
-      sourceHintEl.textContent = "Name/country pulled from the Odoo contact record — still editable if wrong.";
+
+      sourceHintEl.textContent = "Name/country/domain pulled from the Odoo contact record — still editable if wrong.";
       statusEl.textContent = detectedDomain
         ? `Loaded. Will research by domain "${detectedDomain}".`
-        : "Loaded. No email/website on the contact record — will research by name only.";
+        : "Loaded. No email/website on the contact record — will research by name only, or type a domain in above.";
     } else {
       sourceHintEl.textContent = "Couldn't reach the contact record — these are page-scraped guesses. Check/fix before researching.";
       statusEl.textContent = extracted.customerName
@@ -142,7 +157,25 @@ async function init() {
   }
 }
 
-kycBtn.addEventListener("click", () => {
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function sendMessagePromise(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response || { ok: false, error: "No response." });
+    });
+  });
+}
+
+kycBtn.addEventListener("click", async () => {
   const customerName = customerNameInput.value.trim();
   if (!customerName) return;
 
@@ -150,32 +183,34 @@ kycBtn.addEventListener("click", () => {
   kycBtn.textContent = "Researching…";
   errorEl.style.display = "none";
   kycResultEl.style.display = "none";
+  internalResultEl.style.display = "none";
 
-  chrome.runtime.sendMessage(
-    {
+  const [publicRes, internalRes] = await Promise.all([
+    sendMessagePromise({
       type: "RUN_KYC",
       payload: {
         customerName,
         country: customerCountryInput.value.trim(),
-        domain: detectedDomain,
+        domain: domainInput.value.trim(),
       },
-    },
-    (response) => {
-      kycBtn.disabled = false;
-      kycBtn.textContent = "Research KYC";
+    }),
+    sendMessagePromise({ type: "RUN_INTERNAL_KYC", contextText }),
+  ]);
 
-      if (chrome.runtime.lastError) {
-        showError(chrome.runtime.lastError.message);
-        return;
-      }
-      if (!response?.ok) {
-        showError(response?.error || "KYC research failed.");
-        return;
-      }
-      kycResultEl.textContent = response.result;
-      kycResultEl.style.display = "block";
-    }
-  );
+  kycBtn.disabled = false;
+  kycBtn.textContent = "Research KYC";
+
+  if (publicRes.ok) {
+    kycResultEl.innerHTML = `<div class="section-label">Public company research</div>${escapeHtml(publicRes.result)}`;
+    kycResultEl.style.display = "block";
+  } else {
+    showError(publicRes.error || "Public research failed.");
+  }
+
+  if (internalRes.ok) {
+    internalResultEl.innerHTML = `<div class="section-label">Internal account details (from CRM)</div>${escapeHtml(internalRes.result)}`;
+    internalResultEl.style.display = "block";
+  }
 });
 
 document.getElementById("optionsLink").addEventListener("click", (e) => {

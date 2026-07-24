@@ -71,7 +71,7 @@
     color: #6b7280;
     margin-bottom: 8px;
   }
-  #kycResult {
+  #kycResult, #internalResult {
     white-space: pre-wrap;
     font-size: 13px;
     background: #f8f7f9;
@@ -79,6 +79,26 @@
     border-radius: 6px;
     padding: 10px;
     display: none;
+    margin-top: 10px;
+  }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+    margin: 12px 0 4px;
+  }
+  #contactCard {
+    display: none;
+    font-size: 13px;
+    background: #f8f7f9;
+    border: 1px solid #e5e2e6;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+  #contactCard .name {
+    font-weight: 600;
   }
   #error {
     color: #b91c1c;
@@ -100,14 +120,16 @@
     <input id="customerCountryInput" type="text" placeholder="Not read from page — type it in" />
   </div>
   <div class="hint" id="sourceHint">Extraction from Odoo is best-effort — check/fix these before researching.</div>
-  <div class="field" id="domainRow" style="display:none">
-    <div class="label">Domain (from contact record)</div>
-    <div class="value" id="domainValue"></div>
+  <div class="editable" id="domainRow" style="display:none">
+    <label for="domainInput">Domain (from contact record)</label>
+    <input id="domainInput" type="text" placeholder="e.g. example.com" />
   </div>
+  <div id="contactCard"></div>
   <div id="fields"></div>
   <button id="kycBtn" disabled>Research KYC</button>
   <div id="error"></div>
   <div id="kycResult"></div>
+  <div id="internalResult"></div>
   <div style="margin-top:16px;font-size:11px;">
     <a id="optionsLink" href="#">API key settings</a>
   </div>

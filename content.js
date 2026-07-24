@@ -218,12 +218,87 @@ async function fetchOrderPartnerRef(ctx) {
     const rows = await odooRpc(
       model,
       "search_read",
-      [[["id", "=", ctx.id]], ["name", "partner_id"]],
+      [[["id", "=", ctx.id]], ["name", "partner_id", "note"]],
       { limit: 1 }
     );
-    if (rows && rows.length && rows[0].partner_id) return rows[0];
+    if (rows && rows.length && rows[0].partner_id) return { ...rows[0], model };
   }
   return null;
+}
+
+function stripHtml(html) {
+  if (!html) return "";
+  return normalize(html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " "));
+}
+
+// Point-of-contact candidates: individual contacts under the company record.
+async function fetchPartnerContacts(partnerId) {
+  const rows = await odooRpc(
+    "res.partner",
+    "search_read",
+    [[["parent_id", "=", partnerId]], ["name", "function", "email", "phone", "mobile"]],
+    { limit: 10 }
+  );
+  return rows || [];
+}
+
+// All opportunities tied to this customer, most recent first, so we can
+// look at the won one plus any others for extra context (as instructed).
+async function fetchOpportunities(partnerId) {
+  const rows = await odooRpc(
+    "crm.lead",
+    "search_read",
+    [[["partner_id", "=", partnerId]], ["name", "stage_id", "description", "expected_revenue"]],
+    { limit: 20, order: "create_date desc" }
+  );
+  return (rows || []).map((r) => ({
+    name: r.name || "",
+    stage: Array.isArray(r.stage_id) ? r.stage_id[1] : "",
+    won: Array.isArray(r.stage_id) && /won/i.test(r.stage_id[1] || ""),
+    description: stripHtml(r.description),
+  }));
+}
+
+// Recent chatter/log messages on the order itself — sales reps often note
+// context (current system, requirements, etc.) here rather than in a
+// dedicated field.
+async function fetchChatterMessages(model, recordId) {
+  const rows = await odooRpc(
+    "mail.message",
+    "search_read",
+    [
+      [
+        ["res_id", "=", recordId],
+        ["model", "=", model],
+      ],
+      ["body", "author_id"],
+    ],
+    { limit: 20, order: "date desc" }
+  );
+  return (rows || [])
+    .map((r) => stripHtml(r.body))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function buildInternalContextText({ opportunities, notes, chatter }) {
+  const parts = [];
+  if (notes) parts.push(`ORDER NOTES:\n${notes}`);
+  if (opportunities && opportunities.length) {
+    parts.push(
+      "OPPORTUNITIES (most recent first; WON marks the one that became this order):\n" +
+        opportunities
+          .map(
+            (o, i) =>
+              `${i + 1}. "${o.name}" [stage: ${o.stage}${o.won ? ", WON" : ""}]\n${o.description || "(no description)"}`
+          )
+          .join("\n\n")
+    );
+  }
+  if (chatter && chatter.length) {
+    parts.push("CHATTER LOG (most recent first):\n" + chatter.map((c, i) => `${i + 1}. ${c}`).join("\n"));
+  }
+  return parts.join("\n\n---\n\n");
 }
 
 async function fetchPartnerDetails(partnerId) {
@@ -251,9 +326,10 @@ async function fetchPartnerByName(customerName) {
 async function fetchCustomerRecordInfo(fallbackName) {
   const ctx = getRecordContext();
   let partner = null;
+  let orderRef = null;
 
   if (ctx) {
-    const orderRef = await fetchOrderPartnerRef(ctx);
+    orderRef = await fetchOrderPartnerRef(ctx);
     if (orderRef && orderRef.partner_id) {
       partner = await fetchPartnerDetails(orderRef.partner_id[0]);
     }
@@ -265,11 +341,27 @@ async function fetchCustomerRecordInfo(fallbackName) {
 
   if (!partner) return null;
 
+  const partnerId = orderRef && orderRef.partner_id ? orderRef.partner_id[0] : partner.id || null;
+
+  const [contacts, opportunities, chatter] = await Promise.all([
+    partnerId ? fetchPartnerContacts(partnerId) : [],
+    partnerId ? fetchOpportunities(partnerId) : [],
+    ctx && orderRef ? fetchChatterMessages(orderRef.model, ctx.id) : [],
+  ]);
+
+  const contextText = buildInternalContextText({
+    opportunities,
+    notes: stripHtml(orderRef && orderRef.note),
+    chatter,
+  });
+
   return {
     name: partner.name || null,
     email: partner.email || null,
     website: partner.website || null,
     country: Array.isArray(partner.country_id) ? partner.country_id[1] : null,
+    contacts,
+    contextText,
   };
 }
 
