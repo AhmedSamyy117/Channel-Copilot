@@ -1,6 +1,8 @@
 const BASE_URL_KEY = "odooBaseUrl";
 const SCAN_STATE_KEY = "subscriptionScanState";
 const RESULTS_KEY = "subscriptionScanResults";
+const SCOPE_KEY = "subscriptionScanScope";
+const COUNTS_KEY = "subscriptionOppCounts";
 
 const setupBox = document.getElementById("setupBox");
 const detectedHint = document.getElementById("detectedHint");
@@ -19,9 +21,12 @@ const salespersonFilter = document.getElementById("salespersonFilter");
 const stageFilter = document.getElementById("stageFilter");
 const resultsList = document.getElementById("resultsList");
 const emptyState = document.getElementById("emptyState");
+const scopeSelect = document.getElementById("scopeSelect");
+const oppCountLine = document.getElementById("oppCountLine");
 
 let allResults = [];
 let detectedOrigin = null;
+let latestCounts = null;
 
 function showError(msg) {
   errorBanner.textContent = msg;
@@ -40,6 +45,43 @@ function normalizeBaseUrl(value) {
 async function getBaseUrl() {
   const { [BASE_URL_KEY]: baseUrl } = await chrome.storage.local.get([BASE_URL_KEY]);
   return baseUrl || null;
+}
+
+async function getScope() {
+  const { [SCOPE_KEY]: scope } = await chrome.storage.local.get([SCOPE_KEY]);
+  return scope || "mine";
+}
+
+function fmtCount(n) {
+  return typeof n === "number" ? n.toLocaleString() : "—";
+}
+
+function renderOppCountLine() {
+  if (!latestCounts) {
+    oppCountLine.textContent = "Opportunity count: —";
+    return;
+  }
+  const scope = scopeSelect.value;
+  const shown = scope === "mine" ? latestCounts.mine : latestCounts.all;
+  const other = scope === "mine" ? latestCounts.all : latestCounts.mine;
+  const otherLabel = scope === "mine" ? "all opportunities" : "my pipeline";
+  oppCountLine.textContent = `${fmtCount(shown)} opportunities in scope (${fmtCount(other)} ${otherLabel})`;
+}
+
+// Fetches both "My Pipeline" and "all opportunities" counts up front so the
+// total is visible before running a (slow) full scan.
+async function refreshOppCounts() {
+  const baseUrl = await getBaseUrl();
+  if (!baseUrl) return;
+  oppCountLine.textContent = "Opportunity count: loading…";
+  chrome.runtime.sendMessage({ type: "GET_OPP_COUNTS", baseUrl }, (response) => {
+    if (chrome.runtime.lastError || !response?.ok) {
+      oppCountLine.textContent = "Opportunity count: couldn't fetch.";
+      return;
+    }
+    latestCounts = response.counts;
+    renderOppCountLine();
+  });
 }
 
 async function ensurePermission(origin) {
@@ -73,6 +115,7 @@ async function useDetectedOrigin() {
   await chrome.storage.local.set({ [BASE_URL_KEY]: detectedOrigin });
   showError("");
   setupBox.style.display = "none";
+  refreshOppCounts();
 }
 
 saveBaseUrlBtn.addEventListener("click", async () => {
@@ -89,6 +132,12 @@ saveBaseUrlBtn.addEventListener("click", async () => {
   await chrome.storage.local.set({ [BASE_URL_KEY]: normalized });
   showError("");
   setupBox.style.display = "none";
+  refreshOppCounts();
+});
+
+scopeSelect.addEventListener("change", async () => {
+  await chrome.storage.local.set({ [SCOPE_KEY]: scopeSelect.value });
+  renderOppCountLine();
 });
 
 changeUrlBtn.addEventListener("click", async () => {
@@ -242,7 +291,7 @@ scanBtn.addEventListener("click", async () => {
   showError("");
   scanBtn.disabled = true;
   cancelBtn.style.display = "inline-block";
-  chrome.runtime.sendMessage({ type: "START_SUBSCRIPTION_SCAN", baseUrl });
+  chrome.runtime.sendMessage({ type: "START_SUBSCRIPTION_SCAN", baseUrl, scope: scopeSelect.value });
 });
 
 cancelBtn.addEventListener("click", () => {
@@ -259,6 +308,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[SCAN_STATE_KEY]) {
     applyScanState(changes[SCAN_STATE_KEY].newValue);
   }
+  if (changes[COUNTS_KEY]) {
+    latestCounts = changes[COUNTS_KEY].newValue || null;
+    renderOppCountLine();
+  }
 });
 
 async function showDetectedHintIfUseful() {
@@ -273,11 +326,14 @@ async function showDetectedHintIfUseful() {
 async function init() {
   detectedOrigin = await detectActiveTabOrigin();
   const savedBaseUrl = await getBaseUrl();
+  scopeSelect.value = await getScope();
 
   if (!savedBaseUrl) {
     setupBox.style.display = "block";
     baseUrlInput.value = detectedOrigin || "";
     await showDetectedHintIfUseful();
+  } else {
+    refreshOppCounts();
   }
 
   await loadResultsFromStorage();

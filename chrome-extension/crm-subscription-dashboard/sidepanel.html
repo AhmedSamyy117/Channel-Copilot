@@ -160,6 +160,21 @@
   #flaggedCount {
     font-weight: 600;
   }
+  .scope-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .scope-row select {
+    flex: 1;
+    max-width: none;
+  }
+  #oppCountLine {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
 </style>
 </head>
 <body>
@@ -177,6 +192,14 @@
   </div>
 
   <div class="error-banner" id="errorBanner"></div>
+
+  <div class="scope-row">
+    <select id="scopeSelect">
+      <option value="mine">My Pipeline (matches the page's default filter)</option>
+      <option value="all">All opportunities (entire CRM)</option>
+    </select>
+  </div>
+  <div id="oppCountLine">Opportunity count: —</div>
 
   <div class="row">
     <button id="scanBtn">Run scan</button>

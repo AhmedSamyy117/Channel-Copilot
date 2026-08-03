@@ -11,6 +11,7 @@
 
 const SCAN_STATE_KEY = "subscriptionScanState";
 const RESULTS_KEY = "subscriptionScanResults";
+const COUNTS_KEY = "subscriptionOppCounts";
 const PAGE_SIZE = 200;
 const TAB_LOAD_TIMEOUT_MS = 20000;
 const RENDER_SETTLE_MS = 1200;
@@ -49,9 +50,41 @@ async function odooRpcBg(baseUrl, model, method, args, kwargs) {
   return json.result;
 }
 
-async function fetchAllOpportunities(baseUrl, onProgress) {
-  const fields = ["id", "name", "partner_id", "user_id", "stage_id", "expected_revenue"];
+// "mine" mirrors Odoo's own default "My Pipeline" filter (the one visible
+// as a search-bar chip on the CRM page) so scoping to it matches what the
+// user is actually looking at, rather than every opportunity in the company.
+async function getCurrentUserId(baseUrl) {
+  const res = await fetch(`${baseUrl}/web/session/get_session_info`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "call", params: {} }),
+  });
+  if (!res.ok) throw new Error(`Session lookup HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.data?.message || json.error.message || "Session lookup failed");
+  const uid = json.result?.uid;
+  if (!uid) throw new Error("Could not determine the current Odoo user.");
+  return uid;
+}
+
+async function buildScopeDomain(baseUrl, scope) {
   const domain = [["type", "=", "opportunity"]];
+  if (scope === "mine") {
+    const uid = await getCurrentUserId(baseUrl);
+    domain.push(["user_id", "=", uid]);
+  }
+  return domain;
+}
+
+async function countOpportunities(baseUrl, scope) {
+  const domain = await buildScopeDomain(baseUrl, scope);
+  return odooRpcBg(baseUrl, "crm.lead", "search_count", [domain], {});
+}
+
+async function fetchAllOpportunities(baseUrl, scope, onProgress) {
+  const fields = ["id", "name", "partner_id", "user_id", "stage_id", "expected_revenue"];
+  const domain = await buildScopeDomain(baseUrl, scope);
   let offset = 0;
   const all = [];
   for (;;) {
@@ -118,14 +151,14 @@ async function checkOpportunityBanner(baseUrl, id) {
 
 let scanCancelled = false;
 
-async function runSubscriptionScan(baseUrl) {
+async function runSubscriptionScan(baseUrl, scope) {
   scanCancelled = false;
   const trimmedBase = baseUrl.replace(/\/+$/, "");
   await chrome.storage.local.set({
     [SCAN_STATE_KEY]: { status: "listing", checked: 0, total: 0, flagged: 0 },
   });
 
-  const opportunities = await fetchAllOpportunities(trimmedBase, (count) => {
+  const opportunities = await fetchAllOpportunities(trimmedBase, scope, (count) => {
     chrome.storage.local.set({
       [SCAN_STATE_KEY]: { status: "listing", checked: 0, total: count, flagged: 0 },
     });
@@ -172,7 +205,7 @@ async function runSubscriptionScan(baseUrl) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "START_SUBSCRIPTION_SCAN") {
-    runSubscriptionScan(message.baseUrl).catch((err) => {
+    runSubscriptionScan(message.baseUrl, message.scope).catch((err) => {
       chrome.storage.local.set({
         [SCAN_STATE_KEY]: { status: "error", error: err.message || String(err) },
       });
@@ -184,6 +217,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "CANCEL_SUBSCRIPTION_SCAN") {
     scanCancelled = true;
     sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message?.type === "GET_OPP_COUNTS") {
+    (async () => {
+      try {
+        const trimmedBase = message.baseUrl.replace(/\/+$/, "");
+        const [mine, all] = await Promise.all([
+          countOpportunities(trimmedBase, "mine"),
+          countOpportunities(trimmedBase, "all"),
+        ]);
+        const counts = { mine, all };
+        await chrome.storage.local.set({ [COUNTS_KEY]: counts });
+        sendResponse({ ok: true, counts });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      }
+    })();
     return true;
   }
 
