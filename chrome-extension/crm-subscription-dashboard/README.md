@@ -104,18 +104,12 @@ banner's English phrasing — displayed names pass through untouched.
 - A transient Chrome error ("Tabs cannot be edited right now — user may be
   dragging a tab") is retried automatically a couple of times; a single
   record failing to check no longer aborts the whole scan.
-- **"This view's filters" scope depends on having observed a network
-  request from that tab**: there's no public Odoo API for "give me the
-  search bar's current domain," so instead of calling Odoo directly, the
-  extension watches for the JSON-RPC request Odoo's own client already
-  sends to load the list/kanban data and reads the domain out of that
-  request body. This rides Odoo's actual wire protocol (stable across
-  versions) rather than internal JS structure. If it hasn't seen a
-  matching request yet, it auto-nudges one by toggling the view switcher
-  (Kanban ↔ List) and back — filters are untouched — then checks again;
-  if that still comes up empty (e.g. the CRM tab only has one view type
-  available, or the toggle didn't fire in time), you'll see "Haven't seen
-  this page's search query yet," and manually clicking a filter or
-  switching pages once should resolve it. The "My Pipeline" and "All
+- **"This view's filters" scope reads record IDs directly off the
+  rendered page** (list rows' or kanban cards' `data-id` attributes),
+  paging through if there's more than one page, rather than reconstructing
+  Odoo's search domain. This means it needs the CRM tab's list or kanban
+  view to actually be showing rows/cards when you run it — an empty view,
+  a still-loading page, or a non-list/kanban view (e.g. calendar/pivot)
+  will report "No records found on this page." The "My Pipeline" and "All
   opportunities" scopes don't have this requirement since they call
-  Odoo's RPC endpoint directly themselves.
+  Odoo's RPC endpoint directly instead.
