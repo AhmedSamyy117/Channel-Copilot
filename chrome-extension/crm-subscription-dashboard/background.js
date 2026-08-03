@@ -78,22 +78,61 @@ async function getCurrentUserId(baseUrl) {
 // break on a future Odoo upgrade; the "mine"/"all" scopes stay unaffected
 // since those go through stable, public RPC calls instead.
 function extractSearchDomainFromPage() {
-  try {
-    function findSearchEnv(el) {
-      while (el) {
-        const node = el.__owl__;
-        if (node?.component?.env?.searchModel) return node.component.env;
-        el = el.parentElement;
+  function toDomainArray(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw.toList === "function") {
+      try {
+        const list = raw.toList();
+        if (Array.isArray(list)) return list;
+      } catch (e) {
+        /* fall through */
       }
-      return null;
     }
-    const start = document.querySelector(".o_action_manager") || document.body;
-    const env = findSearchEnv(start);
-    if (!env) return { ok: false };
-    const raw = env.searchModel.domain;
-    const domain = typeof raw?.toList === "function" ? raw.toList() : raw;
-    if (!Array.isArray(domain)) return { ok: false };
-    return { ok: true, domain };
+    return null;
+  }
+
+  // Every place a searchModel instance might realistically hang off an OWL
+  // component/env, across Odoo 16-18's various internal shapes. Not
+  // documented anywhere — reverse-engineered from what's actually been
+  // seen on __owl__ nodes in the wild, so more candidates is more robust.
+  function searchModelFrom(node) {
+    if (!node) return null;
+    const c = node.component;
+    return (
+      c?.env?.searchModel ||
+      c?.searchModel ||
+      c?.props?.searchModel ||
+      c?.env?.services?.search_model ||
+      null
+    );
+  }
+
+  try {
+    // 1) Ancestor walk from the main action container (fast path, works
+    // when the search model owner is a direct ancestor).
+    let el = document.querySelector(".o_action_manager") || document.body;
+    while (el) {
+      const model = searchModelFrom(el.__owl__);
+      if (model) {
+        const domain = toDomainArray(model.domain);
+        if (domain) return { ok: true, domain };
+      }
+      el = el.parentElement;
+    }
+
+    // 2) Broad scan: some Odoo versions attach the search model to a
+    // component that isn't an ancestor of .o_action_manager at all (e.g.
+    // a sibling control-panel component). Check every element on the page.
+    const all = document.querySelectorAll("*");
+    for (const node of all) {
+      const model = searchModelFrom(node.__owl__);
+      if (model) {
+        const domain = toDomainArray(model.domain);
+        if (domain) return { ok: true, domain };
+      }
+    }
+
+    return { ok: false };
   } catch (err) {
     return { ok: false };
   }
