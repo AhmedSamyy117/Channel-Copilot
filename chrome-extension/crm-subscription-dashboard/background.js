@@ -212,16 +212,24 @@ function waitForTabComplete(tabId, timeoutMs) {
   });
 }
 
-// Injected into the hidden form-view tab. Reads the rendered page text
-// rather than relying on a fixed selector, since the banner's markup could
-// change across Odoo versions/customizations.
+// Injected into the hidden form-view tab. Odoo renders this notice as a
+// yellow alert box (role="alert" / class containing "alert"), so we read
+// that element's text specifically — a smaller, more targeted signal than
+// the whole page — and also keep the full body text as a fallback in case
+// the banner's markup doesn't use that pattern on some version/customization.
 function scanPageForBanner() {
+  const alertNodes = Array.from(document.querySelectorAll('[role="alert"], [class*="alert"]'));
+  const alertText = alertNodes.map((el) => el.innerText || "").join("\n");
   const text = document.body.innerText || "";
-  return { text };
+  return { alertText, text };
 }
 
 function textHasBanner(text) {
   return BANNER_PATTERNS.some((re) => re.test(text));
+}
+
+function pageHasBanner(result) {
+  return textHasBanner(result?.alertText || "") || textHasBanner(result?.text || "");
 }
 
 // Chrome throws "Tabs cannot be edited right now (user may be dragging a
@@ -233,6 +241,23 @@ function isTransientTabError(err) {
   return /dragging a tab|tabs cannot be edited/i.test(err?.message || "");
 }
 
+// The banner itself is often computed by a second, async lookup (checking
+// the partner's subscriptions) that finishes after the rest of the form
+// has rendered — and since this is a hidden/background tab, Chrome throttles
+// its timers, so that lookup can take noticeably longer than in a normal
+// foreground tab. A single fixed-delay snapshot was missing real banners
+// that hadn't rendered in time yet.
+//
+// Rather than always waiting the full window (which would multiply total
+// scan time across 600+ records), poll repeatedly but stop early once the
+// page's text stops changing between two consecutive checks — a proxy for
+// "whatever was still loading has settled" — so records with no banner
+// exit quickly, while ones where content is still shifting keep getting
+// checked up to the cap.
+const BANNER_POLL_INTERVAL_MS = 600;
+const BANNER_POLL_MAX_ATTEMPTS = 8; // cap: ~5s extra on top of RENDER_SETTLE_MS
+const BANNER_STABLE_CHECKS_TO_STOP = 2;
+
 async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
   const url = `${baseUrl}/odoo/crm/${id}`;
   let tab;
@@ -240,11 +265,28 @@ async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
     tab = await chrome.tabs.create({ url, active: false });
     await waitForTabComplete(tab.id, TAB_LOAD_TIMEOUT_MS);
     await sleep(RENDER_SETTLE_MS);
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: scanPageForBanner,
-    });
-    return textHasBanner(result?.text || "");
+
+    let lastText = null;
+    let stableCount = 0;
+    for (let poll = 0; poll < BANNER_POLL_MAX_ATTEMPTS; poll++) {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: scanPageForBanner,
+      });
+      if (pageHasBanner(result)) return true;
+
+      const text = result?.text || "";
+      if (text === lastText) {
+        stableCount++;
+        if (stableCount >= BANNER_STABLE_CHECKS_TO_STOP) break;
+      } else {
+        stableCount = 0;
+      }
+      lastText = text;
+
+      await sleep(BANNER_POLL_INTERVAL_MS);
+    }
+    return false;
   } catch (err) {
     if (isTransientTabError(err) && attempt < 3) {
       await sleep(1500 * attempt);

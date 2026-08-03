@@ -40,11 +40,22 @@ So the scan works in two parts:
    "40 per page" UI pagination at all.
 2. **Banner check, brute force**: since no shortcut was found, each
    opportunity's form view is opened in a hidden background tab
-   (`chrome.tabs.create({active: false})`), given time to render, and the
-   page text is matched against the banner's known phrasing ("running or a
-   churned subscription"). Tabs are opened one at a time with a delay
-   between each to avoid hammering the instance — a full scan across 600+
-   opportunities takes roughly 15–20+ minutes.
+   (`chrome.tabs.create({active: false})`). The banner itself is often
+   computed by Odoo via a second, async lookup (checking the partner's
+   subscriptions) that can finish well after the rest of the form has
+   rendered — and since Chrome throttles timers in hidden/background
+   tabs, that lookup can take noticeably longer than in a normal
+   foreground tab. Rather than reading the page once after a fixed delay
+   (which was missing real banners that hadn't rendered yet), it polls
+   repeatedly, checking specifically the rendered yellow alert box
+   (`[role="alert"]` / `[class*="alert"]`, with the full page text as a
+   fallback) against the banner's known phrasing ("running or a churned
+   subscription"), and stops early once the page's content stops changing
+   between checks (a proxy for "whatever was loading has settled") so
+   records with no banner don't pay the full polling window. Tabs are
+   opened one at a time with a delay between each to avoid hammering the
+   instance — a full scan across 600+ opportunities takes roughly
+   20–30+ minutes.
 
 Only flagged opportunities are kept: name, contact/company, salesperson,
 stage, expected revenue, and a link back to the record in Odoo. Handles
