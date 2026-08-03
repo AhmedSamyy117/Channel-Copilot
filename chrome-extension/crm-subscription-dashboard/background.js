@@ -68,7 +68,58 @@ async function getCurrentUserId(baseUrl) {
   return uid;
 }
 
-async function buildScopeDomain(baseUrl, scope) {
+// Injected into the actual CRM tab to read whatever filters/facets are
+// currently applied in Odoo's own search bar (e.g. "Assigned Partner = X",
+// "Stage not = Won"), not just the default "My Pipeline" chip. Odoo's web
+// client (OWL framework) keeps the live, fully-resolved domain on the
+// current view's searchModel — there's no public RPC for this, so this
+// reaches into the client's own component tree the same way Odoo devs do
+// from the browser console. It's undocumented internal state, so it can
+// break on a future Odoo upgrade; the "mine"/"all" scopes stay unaffected
+// since those go through stable, public RPC calls instead.
+function extractSearchDomainFromPage() {
+  try {
+    function findSearchEnv(el) {
+      while (el) {
+        const node = el.__owl__;
+        if (node?.component?.env?.searchModel) return node.component.env;
+        el = el.parentElement;
+      }
+      return null;
+    }
+    const start = document.querySelector(".o_action_manager") || document.body;
+    const env = findSearchEnv(start);
+    if (!env) return { ok: false };
+    const raw = env.searchModel.domain;
+    const domain = typeof raw?.toList === "function" ? raw.toList() : raw;
+    if (!Array.isArray(domain)) return { ok: false };
+    return { ok: true, domain };
+  } catch (err) {
+    return { ok: false };
+  }
+}
+
+async function getActivePageDomain(tabId) {
+  if (!tabId) {
+    throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: extractSearchDomainFromPage,
+  });
+  const result = results?.[0]?.result;
+  if (!result?.ok) {
+    throw new Error(
+      "Couldn't read this page's filters — make sure the CRM Pipeline tab (list or kanban view) is open, then try again."
+    );
+  }
+  return result.domain;
+}
+
+async function buildScopeDomain(baseUrl, scope, tabId) {
+  if (scope === "page") {
+    return getActivePageDomain(tabId);
+  }
   const domain = [["type", "=", "opportunity"]];
   if (scope === "mine") {
     const uid = await getCurrentUserId(baseUrl);
@@ -77,14 +128,14 @@ async function buildScopeDomain(baseUrl, scope) {
   return domain;
 }
 
-async function countOpportunities(baseUrl, scope) {
-  const domain = await buildScopeDomain(baseUrl, scope);
+async function countOpportunities(baseUrl, scope, tabId) {
+  const domain = await buildScopeDomain(baseUrl, scope, tabId);
   return odooRpcBg(baseUrl, "crm.lead", "search_count", [domain], {});
 }
 
-async function fetchAllOpportunities(baseUrl, scope, onProgress) {
+async function fetchAllOpportunities(baseUrl, scope, tabId, onProgress) {
   const fields = ["id", "name", "partner_id", "user_id", "stage_id", "expected_revenue"];
-  const domain = await buildScopeDomain(baseUrl, scope);
+  const domain = await buildScopeDomain(baseUrl, scope, tabId);
   let offset = 0;
   const all = [];
   for (;;) {
@@ -165,14 +216,14 @@ async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
 
 let scanCancelled = false;
 
-async function runSubscriptionScan(baseUrl, scope) {
+async function runSubscriptionScan(baseUrl, scope, tabId) {
   scanCancelled = false;
   const trimmedBase = baseUrl.replace(/\/+$/, "");
   await chrome.storage.local.set({
     [SCAN_STATE_KEY]: { status: "listing", checked: 0, total: 0, flagged: 0 },
   });
 
-  const opportunities = await fetchAllOpportunities(trimmedBase, scope, (count) => {
+  const opportunities = await fetchAllOpportunities(trimmedBase, scope, tabId, (count) => {
     chrome.storage.local.set({
       [SCAN_STATE_KEY]: { status: "listing", checked: 0, total: count, flagged: 0 },
     });
@@ -226,7 +277,7 @@ async function runSubscriptionScan(baseUrl, scope) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "START_SUBSCRIPTION_SCAN") {
-    runSubscriptionScan(message.baseUrl, message.scope).catch((err) => {
+    runSubscriptionScan(message.baseUrl, message.scope, message.tabId).catch((err) => {
       chrome.storage.local.set({
         [SCAN_STATE_KEY]: { status: "error", error: err.message || String(err) },
       });
@@ -252,6 +303,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const counts = { mine, all };
         await chrome.storage.local.set({ [COUNTS_KEY]: counts });
         sendResponse({ ok: true, counts });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === "GET_PAGE_COUNT") {
+    (async () => {
+      try {
+        const trimmedBase = message.baseUrl.replace(/\/+$/, "");
+        const count = await countOpportunities(trimmedBase, "page", message.tabId);
+        sendResponse({ ok: true, count });
       } catch (err) {
         sendResponse({ ok: false, error: err.message || String(err) });
       }

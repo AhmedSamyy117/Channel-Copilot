@@ -27,6 +27,7 @@ const oppCountLine = document.getElementById("oppCountLine");
 let allResults = [];
 let detectedOrigin = null;
 let latestCounts = null;
+let pageCountState = null; // { status: "loading" | "ok" | "error", count?, error? }
 
 function showError(msg) {
   errorBanner.textContent = msg;
@@ -56,12 +57,31 @@ function fmtCount(n) {
   return typeof n === "number" ? n.toLocaleString() : "—";
 }
 
+async function getActiveCrmTabId() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab?.id || null;
+}
+
 function renderOppCountLine() {
+  const scope = scopeSelect.value;
+
+  if (scope === "page") {
+    if (!pageCountState) {
+      oppCountLine.textContent = "Opportunity count: —";
+    } else if (pageCountState.status === "loading") {
+      oppCountLine.textContent = "Opportunity count: reading this page's filters…";
+    } else if (pageCountState.status === "error") {
+      oppCountLine.textContent = pageCountState.error;
+    } else {
+      oppCountLine.textContent = `${fmtCount(pageCountState.count)} opportunities match this page's current filters`;
+    }
+    return;
+  }
+
   if (!latestCounts) {
     oppCountLine.textContent = "Opportunity count: —";
     return;
   }
-  const scope = scopeSelect.value;
   const shown = scope === "mine" ? latestCounts.mine : latestCounts.all;
   const other = scope === "mine" ? latestCounts.all : latestCounts.mine;
   const otherLabel = scope === "mine" ? "all opportunities" : "my pipeline";
@@ -73,13 +93,32 @@ function renderOppCountLine() {
 async function refreshOppCounts() {
   const baseUrl = await getBaseUrl();
   if (!baseUrl) return;
-  oppCountLine.textContent = "Opportunity count: loading…";
+  if (scopeSelect.value !== "page") oppCountLine.textContent = "Opportunity count: loading…";
   chrome.runtime.sendMessage({ type: "GET_OPP_COUNTS", baseUrl }, (response) => {
     if (chrome.runtime.lastError || !response?.ok) {
-      oppCountLine.textContent = "Opportunity count: couldn't fetch.";
+      if (scopeSelect.value !== "page") oppCountLine.textContent = "Opportunity count: couldn't fetch.";
       return;
     }
     latestCounts = response.counts;
+    renderOppCountLine();
+  });
+}
+
+// "page" scope reads the live search domain off the actual CRM tab
+// (whatever filters/facets are currently applied there), so it needs a
+// fresh RPC each time rather than the cached mine/all counts above.
+async function refreshPageCount() {
+  const baseUrl = await getBaseUrl();
+  if (!baseUrl) return;
+  const tabId = await getActiveCrmTabId();
+  pageCountState = { status: "loading" };
+  renderOppCountLine();
+  chrome.runtime.sendMessage({ type: "GET_PAGE_COUNT", baseUrl, tabId }, (response) => {
+    if (chrome.runtime.lastError || !response?.ok) {
+      pageCountState = { status: "error", error: response?.error || "Couldn't read this page's filters." };
+    } else {
+      pageCountState = { status: "ok", count: response.count };
+    }
     renderOppCountLine();
   });
 }
@@ -137,7 +176,11 @@ saveBaseUrlBtn.addEventListener("click", async () => {
 
 scopeSelect.addEventListener("change", async () => {
   await chrome.storage.local.set({ [SCOPE_KEY]: scopeSelect.value });
-  renderOppCountLine();
+  if (scopeSelect.value === "page") {
+    refreshPageCount();
+  } else {
+    renderOppCountLine();
+  }
 });
 
 changeUrlBtn.addEventListener("click", async () => {
@@ -291,7 +334,8 @@ scanBtn.addEventListener("click", async () => {
   showError("");
   scanBtn.disabled = true;
   cancelBtn.style.display = "inline-block";
-  chrome.runtime.sendMessage({ type: "START_SUBSCRIPTION_SCAN", baseUrl, scope: scopeSelect.value });
+  const tabId = scopeSelect.value === "page" ? await getActiveCrmTabId() : null;
+  chrome.runtime.sendMessage({ type: "START_SUBSCRIPTION_SCAN", baseUrl, scope: scopeSelect.value, tabId });
 });
 
 cancelBtn.addEventListener("click", () => {
@@ -332,6 +376,8 @@ async function init() {
     setupBox.style.display = "block";
     baseUrlInput.value = detectedOrigin || "";
     await showDetectedHintIfUseful();
+  } else if (scopeSelect.value === "page") {
+    refreshPageCount();
   } else {
     refreshOppCounts();
   }

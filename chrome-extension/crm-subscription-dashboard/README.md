@@ -53,11 +53,22 @@ banner's English phrasing — displayed names pass through untouched.
 
 ## Side panel
 
-- **Scope selector**: "My Pipeline" (default — mirrors Odoo's own "My
-  Pipeline" search-bar filter, i.e. opportunities assigned to the current
-  user) or "All opportunities" (entire CRM, no filter). Below it, an
-  opportunity count for the current scope is fetched immediately (via a
-  fast `search_count` call) so you see the total before running a scan.
+- **Scope selector**, three options:
+  - "My Pipeline" (default) — mirrors Odoo's own "My Pipeline" search-bar
+    filter (opportunities assigned to the current user), via a stable RPC
+    call (`user_id = <current uid>`).
+  - "All opportunities" — entire CRM, no filter, via the same stable RPC.
+  - "This view's filters" — matches *whatever* filters/facets you've
+    actually applied on the CRM tab (e.g. "Assigned Partner = X", "Stage
+    not = Won", combined with My Pipeline or not). This one works
+    differently: it reads the live search domain straight out of Odoo's
+    own web client state on that tab (see caveat below), so switching to
+    it re-reads the domain fresh each time — including right before a scan
+    starts, in case you changed filters since the count was last shown.
+  Below the selector, an opportunity count for the current scope is
+  fetched immediately (`search_count` for the first two scopes; live
+  domain read + `search_count` for "This view's filters") so you see the
+  total before running the slower per-record scan.
 - Filterable by salesperson, stage, or a text search over name/contact;
   sorted by expected revenue, highest first.
 - "Last refreshed" timestamp and a "Run scan" button — re-run any time to
@@ -75,3 +86,15 @@ banner's English phrasing — displayed names pass through untouched.
 - Because this brute-forces one hidden tab per opportunity, it's slower
   than a true RPC-based check would be — accepted tradeoff since no such
   RPC/field shortcut was found.
+- A transient Chrome error ("Tabs cannot be edited right now — user may be
+  dragging a tab") is retried automatically a couple of times; a single
+  record failing to check no longer aborts the whole scan.
+- **"This view's filters" scope is inherently fragile**: there's no public
+  Odoo API for "give me the search bar's current domain," so it reaches
+  into the web client's internal OWL component state (the same trick Odoo
+  developers use from the browser console) to read `searchModel.domain`.
+  This is undocumented internal structure, not a stable interface — a
+  future Odoo upgrade could change it and break this one scope (it would
+  show an error like "Couldn't read this page's filters" rather than
+  silently returning wrong data). The "My Pipeline" and "All opportunities"
+  scopes are unaffected since they only use stable, public RPC calls.
