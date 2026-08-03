@@ -53,6 +53,11 @@ banner's English phrasing — displayed names pass through untouched.
 
 ## Side panel
 
+- **Scope selector**: "My Pipeline" (default — mirrors Odoo's own "My
+  Pipeline" search-bar filter, i.e. opportunities assigned to the current
+  user) or "All opportunities" (entire CRM, no filter). Below it, an
+  opportunity count for the current scope is fetched immediately (via a
+  fast `search_count` call) so you see the total before running a scan.
 - Filterable by salesperson, stage, or a text search over name/contact;
   sorted by expected revenue, highest first.
 - "Last refreshed" timestamp and a "Run scan" button — re-run any time to
