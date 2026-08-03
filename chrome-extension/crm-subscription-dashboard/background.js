@@ -22,8 +22,8 @@ const BANNER_PATTERNS = [
   /churned\s+subscription/i,
 ];
 
-chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+chrome.action.onClicked.addListener((tab) => {
+  if (tab.id) chrome.sidePanel.open({ tabId: tab.id });
 });
 
 function sleep(ms) {

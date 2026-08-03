@@ -3,13 +3,16 @@
   "name": "CRM Subscription Flags",
   "version": "0.1.0",
   "description": "Scans the Odoo CRM pipeline and lists opportunities flagged with a running or churned subscription.",
-  "permissions": ["storage", "scripting", "tabs", "permissions"],
+  "permissions": ["storage", "scripting", "tabs", "permissions", "sidePanel"],
   "optional_host_permissions": ["*://*/*"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_title": "CRM Subscription Flags"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "icons": {
     "128": "icons/icon128.png"

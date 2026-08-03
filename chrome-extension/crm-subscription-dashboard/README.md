@@ -11,15 +11,17 @@ opportunities one at a time.
 1. `chrome://extensions` → enable Developer mode.
 2. "Load unpacked" → select this folder
    (`chrome-extension/crm-subscription-dashboard`).
-3. Click the extension icon to open the dashboard tab.
+3. Open your Odoo CRM in a tab, then click the extension icon — it opens in
+   the browser's side panel, docked next to the page you're on.
 
 ## Setup
 
 Make sure you're already logged into your Odoo instance in this browser
-(this extension doesn't handle login/credentials at all). On first use,
-enter your Odoo base URL (e.g. `https://yourcompany.odoo.com`) in the
-dashboard's setup box and click "Save & grant access" — Chrome will prompt
-you to approve access for that site only.
+(this extension doesn't handle login/credentials at all). The first time
+you open the side panel, it detects the Odoo site from whichever tab is
+active and offers to use it directly — click "Save & grant access" to
+approve (Chrome will prompt for that site only). If you opened the panel
+from a different tab, you can still type the URL manually.
 
 ## How it works
 
@@ -49,14 +51,14 @@ stage, expected revenue, and a link back to the record in Odoo. Handles
 Arabic-language names/company text fine since matching happens only on the
 banner's English phrasing — displayed names pass through untouched.
 
-## Dashboard
+## Side panel
 
-- Sortable by any column, filterable by salesperson, stage, or a text
-  search over name/contact.
+- Filterable by salesperson, stage, or a text search over name/contact;
+  sorted by expected revenue, highest first.
 - "Last refreshed" timestamp and a "Run scan" button — re-run any time to
   refresh. "Cancel" stops a scan in progress.
-- Results persist in `chrome.storage.local`, so reopening the dashboard
-  shows the last completed scan immediately without waiting.
+- Results persist in `chrome.storage.local`, so reopening the panel shows
+  the last completed scan immediately without waiting.
 
 ## Notes / limitations
 

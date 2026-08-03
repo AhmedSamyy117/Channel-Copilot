@@ -3,6 +3,7 @@ const SCAN_STATE_KEY = "subscriptionScanState";
 const RESULTS_KEY = "subscriptionScanResults";
 
 const setupBox = document.getElementById("setupBox");
+const detectedHint = document.getElementById("detectedHint");
 const baseUrlInput = document.getElementById("baseUrlInput");
 const saveBaseUrlBtn = document.getElementById("saveBaseUrlBtn");
 const changeUrlBtn = document.getElementById("changeUrlBtn");
@@ -16,13 +17,11 @@ const flaggedCountEl = document.getElementById("flaggedCount");
 const filterInput = document.getElementById("filterInput");
 const salespersonFilter = document.getElementById("salespersonFilter");
 const stageFilter = document.getElementById("stageFilter");
-const resultsBody = document.getElementById("resultsBody");
+const resultsList = document.getElementById("resultsList");
 const emptyState = document.getElementById("emptyState");
-const resultsTable = document.getElementById("resultsTable");
 
 let allResults = [];
-let sortKey = "expectedRevenue";
-let sortDir = -1;
+let detectedOrigin = null;
 
 function showError(msg) {
   errorBanner.textContent = msg;
@@ -50,6 +49,32 @@ async function ensurePermission(origin) {
   return chrome.permissions.request({ origins: [pattern] });
 }
 
+// Reads the origin of whatever tab is active when the panel opens, so the
+// user doesn't have to type their Odoo URL by hand — they're expected to
+// already be on (or near) the CRM in that tab.
+async function detectActiveTabOrigin() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url || !/^https?:/.test(tab.url)) return null;
+  try {
+    const url = new URL(tab.url);
+    return `${url.protocol}//${url.host}`;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function useDetectedOrigin() {
+  if (!detectedOrigin) return;
+  const granted = await ensurePermission(detectedOrigin);
+  if (!granted) {
+    showError("Access to this site is required to scan its CRM.");
+    return;
+  }
+  await chrome.storage.local.set({ [BASE_URL_KEY]: detectedOrigin });
+  showError("");
+  setupBox.style.display = "none";
+}
+
 saveBaseUrlBtn.addEventListener("click", async () => {
   const normalized = normalizeBaseUrl(baseUrlInput.value);
   if (!normalized) {
@@ -66,8 +91,11 @@ saveBaseUrlBtn.addEventListener("click", async () => {
   setupBox.style.display = "none";
 });
 
-changeUrlBtn.addEventListener("click", () => {
+changeUrlBtn.addEventListener("click", async () => {
   setupBox.style.display = "block";
+  const baseUrl = await getBaseUrl();
+  baseUrlInput.value = baseUrl || detectedOrigin || "";
+  await showDetectedHintIfUseful();
 });
 
 function fmtCurrency(n) {
@@ -111,7 +139,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function renderTable() {
+function renderList() {
   const term = filterInput.value.trim().toLowerCase();
   const spFilter = salespersonFilter.value;
   const stFilter = stageFilter.value;
@@ -126,54 +154,29 @@ function renderTable() {
     return true;
   });
 
-  rows.sort((a, b) => {
-    const va = a[sortKey];
-    const vb = b[sortKey];
-    if (typeof va === "number" || typeof vb === "number") {
-      return ((va || 0) - (vb || 0)) * sortDir;
-    }
-    return String(va || "").localeCompare(String(vb || "")) * sortDir;
-  });
+  rows.sort((a, b) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0));
 
-  resultsBody.innerHTML = "";
-  resultsTable.style.display = rows.length ? "" : "none";
+  resultsList.innerHTML = "";
   emptyState.style.display = rows.length ? "none" : "block";
 
   for (const r of rows) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${escapeHtml(r.name)}</td>
-      <td>${escapeHtml(r.contact)}</td>
-      <td>${escapeHtml(r.salesperson)}</td>
-      <td>${escapeHtml(r.stage)}</td>
-      <td>${fmtCurrency(r.expectedRevenue)}</td>
-      <td><a class="opp-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Open in Odoo</a></td>
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="name">${escapeHtml(r.name)}</div>
+      <div class="meta">${escapeHtml(r.contact)}${r.salesperson ? " · " + escapeHtml(r.salesperson) : ""}${r.stage ? " · " + escapeHtml(r.stage) : ""}</div>
+      <div class="revenue">${fmtCurrency(r.expectedRevenue)}</div>
+      <a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Open in Odoo →</a>
     `;
-    resultsBody.appendChild(tr);
+    resultsList.appendChild(card);
   }
 
   flaggedCountEl.textContent = `${rows.length} flagged${rows.length !== allResults.length ? ` (of ${allResults.length} total)` : ""}`;
 }
 
-document.querySelectorAll("th[data-key]").forEach((th) => {
-  th.addEventListener("click", () => {
-    const key = th.dataset.key;
-    if (sortKey === key) {
-      sortDir *= -1;
-    } else {
-      sortKey = key;
-      sortDir = key === "expectedRevenue" ? -1 : 1;
-    }
-    document.querySelectorAll("th[data-key]").forEach((el) => el.classList.remove("sort-active"));
-    th.classList.add("sort-active");
-    th.dataset.dir = sortDir === 1 ? "▲" : "▼";
-    renderTable();
-  });
-});
-
-filterInput.addEventListener("input", renderTable);
-salespersonFilter.addEventListener("change", renderTable);
-stageFilter.addEventListener("change", renderTable);
+filterInput.addEventListener("input", renderList);
+salespersonFilter.addEventListener("change", renderList);
+stageFilter.addEventListener("change", renderList);
 
 async function loadResultsFromStorage() {
   const { [RESULTS_KEY]: results, [SCAN_STATE_KEY]: state } = await chrome.storage.local.get([
@@ -182,7 +185,7 @@ async function loadResultsFromStorage() {
   ]);
   allResults = results || [];
   populateFilterOptions();
-  renderTable();
+  renderList();
   applyScanState(state);
 }
 
@@ -221,7 +224,11 @@ function applyScanState(state) {
 }
 
 scanBtn.addEventListener("click", async () => {
-  const baseUrl = await getBaseUrl();
+  let baseUrl = await getBaseUrl();
+  if (!baseUrl && detectedOrigin) {
+    await useDetectedOrigin();
+    baseUrl = await getBaseUrl();
+  }
   if (!baseUrl) {
     setupBox.style.display = "block";
     showError("Set your Odoo base URL first.");
@@ -247,20 +254,32 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[RESULTS_KEY]) {
     allResults = changes[RESULTS_KEY].newValue || [];
     populateFilterOptions();
-    renderTable();
+    renderList();
   }
   if (changes[SCAN_STATE_KEY]) {
     applyScanState(changes[SCAN_STATE_KEY].newValue);
   }
 });
 
-async function init() {
-  const baseUrl = await getBaseUrl();
-  if (!baseUrl) {
-    setupBox.style.display = "block";
+async function showDetectedHintIfUseful() {
+  if (detectedOrigin) {
+    detectedHint.textContent = `Detected from your current tab: ${detectedOrigin}`;
+    detectedHint.style.display = "block";
   } else {
-    baseUrlInput.value = baseUrl;
+    detectedHint.style.display = "none";
   }
+}
+
+async function init() {
+  detectedOrigin = await detectActiveTabOrigin();
+  const savedBaseUrl = await getBaseUrl();
+
+  if (!savedBaseUrl) {
+    setupBox.style.display = "block";
+    baseUrlInput.value = detectedOrigin || "";
+    await showDetectedHintIfUseful();
+  }
+
   await loadResultsFromStorage();
 }
 
