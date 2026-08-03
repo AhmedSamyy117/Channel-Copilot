@@ -113,11 +113,43 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["requestBody"]
 );
 
+// Toggles the view switcher (e.g. Kanban -> List -> Kanban) and back, which
+// makes Odoo re-issue the exact same search with the exact same domain —
+// no filter is touched — just to give our webRequest listener a fresh
+// request to observe. Used as a fallback when we haven't seen one yet,
+// so the user doesn't have to manually click something first.
+function triggerFreshSearchOnPage() {
+  try {
+    const switches = Array.from(document.querySelectorAll(".o_switch_view"));
+    if (switches.length < 2) return { ok: false };
+    const activeIdx = switches.findIndex((el) => el.classList.contains("active"));
+    const startIdx = activeIdx >= 0 ? activeIdx : 0;
+    const otherIdx = startIdx === 0 ? 1 : 0;
+    switches[otherIdx]?.click();
+    setTimeout(() => switches[startIdx]?.click(), 350);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false };
+  }
+}
+
 async function getActivePageDomain(tabId) {
   if (!tabId) {
     throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
   }
-  const entry = latestPageDomainByTab.get(tabId);
+
+  let entry = latestPageDomainByTab.get(tabId);
+  if (!entry) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, func: triggerFreshSearchOnPage });
+    } catch (err) {
+      // Injection can fail (e.g. not on a normal page) — fall through to
+      // the "haven't seen it" error below rather than crashing here.
+    }
+    await sleep(1200);
+    entry = latestPageDomainByTab.get(tabId);
+  }
+
   if (!entry) {
     throw new Error(
       "Haven't seen this page's search query yet — click a filter, refresh the list, or switch pages once on the CRM tab, then try again."

@@ -65,10 +65,12 @@ banner's English phrasing — displayed names pass through untouched.
     network request Odoo's own web client already made to load that list
     (a JSON-RPC POST to `/web/dataset/call_kw` for `crm.lead`) and reads
     the domain straight out of that request's body — the exact domain
-    that produced what's on your screen. It needs to have seen at least
-    one such request from that tab; if you just installed/reloaded the
-    extension before the page's last load, click a filter or refresh the
-    list once so a fresh request fires.
+    that produced what's on your screen. If it hasn't seen such a request
+    yet from that tab, it automatically toggles the view switcher (e.g.
+    Kanban → List → Kanban) and back, which makes Odoo reissue the exact
+    same search with the exact same filters — nothing on the page
+    changes — just to give itself a fresh request to read, so you
+    shouldn't normally need to do anything manually.
   Below the selector, an opportunity count for the current scope is
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
@@ -99,10 +101,12 @@ banner's English phrasing — displayed names pass through untouched.
   extension watches for the JSON-RPC request Odoo's own client already
   sends to load the list/kanban data and reads the domain out of that
   request body. This rides Odoo's actual wire protocol (stable across
-  versions) rather than internal JS structure, but it only works after
-  the extension has actually seen at least one matching request — if nothing
-  has loaded yet on that tab since the extension got permission, you'll see
-  "Haven't seen this page's search query yet"; clicking a filter or
-  refreshing the list once fixes it, since it's captured passively going
-  forward. The "My Pipeline" and "All opportunities" scopes don't have this
-  requirement since they call Odoo's RPC endpoint directly themselves.
+  versions) rather than internal JS structure. If it hasn't seen a
+  matching request yet, it auto-nudges one by toggling the view switcher
+  (Kanban ↔ List) and back — filters are untouched — then checks again;
+  if that still comes up empty (e.g. the CRM tab only has one view type
+  available, or the toggle didn't fire in time), you'll see "Haven't seen
+  this page's search query yet," and manually clicking a filter or
+  switching pages once should resolve it. The "My Pipeline" and "All
+  opportunities" scopes don't have this requirement since they call
+  Odoo's RPC endpoint directly themselves.
