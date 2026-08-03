@@ -70,87 +70,75 @@ async function getCurrentUserId(baseUrl) {
 
 // "page" scope needs to match whatever filters/facets are currently
 // applied in Odoo's own search bar (e.g. "Assigned Partner = X", "Stage
-// not = Won"), not just the default "My Pipeline" chip. Two earlier
+// not = Won"), not just the default "My Pipeline" chip. There's no public
+// RPC for "give me the current search domain," and two internal
 // approaches both proved too fragile on real Odoo instances: reflecting
 // into the OWL component's internal search-model state (version-specific,
-// never found the right shape), and passively sniffing the JSON-RPC
-// request body Odoo's client sends (worked in principle, but recovering
-// from a cold tab required auto-toggling the view switcher, which visibly
-// flips the page between kanban and list and still wasn't reliable).
+// never found the right shape), and reading record IDs off the rendered
+// DOM (the `data-id` Odoo puts on rows/cards turned out not to reliably
+// correspond to what's expected, and an auto-nudge that toggled the view
+// switcher to force a fresh request was visibly disruptive).
 //
-// Instead, this reads the record IDs directly off whatever is already
-// rendered on screen — the exact rows/cards the user is looking at — and
-// pages through the list/kanban pager to collect every ID if there's more
-// than one page. No domain to reconstruct, no RPC to guess at, and
-// nothing on the page changes that the user didn't already trigger
-// themselves (view stays whatever it already was).
-function scrapeAllVisibleRecordIds() {
-  function readPagerTotal() {
-    const el = document.querySelector(".o_pager_counter, .o_pager");
-    if (!el) return null;
-    const match = (el.innerText || "").match(/\/\s*([\d,]+)/);
-    return match ? parseInt(match[1].replace(/,/g, ""), 10) : null;
-  }
-  function currentIds() {
-    return Array.from(document.querySelectorAll(".o_data_row[data-id], .o_kanban_record[data-id]"))
-      .map((el) => el.dataset.id)
-      .filter(Boolean);
-  }
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
+// This instead passively watches the network requests Odoo's own web
+// client already makes to load the list/kanban data (JSON-RPC POSTs to
+// /web/dataset/call_kw) and reads the domain straight out of the request
+// body Odoo itself sent — the exact domain that produced what's on
+// screen. It's purely passive: nothing on the page is touched. If no such
+// request has been observed yet from that tab (e.g. the page loaded
+// before the extension was ready to listen), the fix is simply to
+// interact with the page once yourself — click a filter, remove/re-add
+// one, or switch pages — which makes Odoo issue a fresh request for the
+// listener to catch.
+const latestPageDomainByTab = new Map(); // tabId -> { domain, timestamp }
 
-  return (async () => {
-    const ids = new Set();
-    const total = readPagerTotal();
-    let guard = 0;
-    let pagesAdvanced = 0;
-    for (;;) {
-      currentIds().forEach((id) => ids.add(id));
-      if (total && ids.size >= total) break;
-      const nextBtn = document.querySelector(".o_pager_next");
-      if (!nextBtn || nextBtn.disabled || nextBtn.classList.contains("disabled")) break;
-      nextBtn.click();
-      pagesAdvanced++;
-      await sleep(700);
-      guard++;
-      if (guard > 500) break; // safety cap, should never hit in practice
-    }
-    // Leave the view exactly how it was found rather than stuck on the
-    // last page — page back the same number of times we paged forward.
-    for (let i = 0; i < pagesAdvanced; i++) {
-      const prevBtn = document.querySelector(".o_pager_previous");
-      if (!prevBtn || prevBtn.disabled || prevBtn.classList.contains("disabled")) break;
-      prevBtn.click();
-      await sleep(700);
-    }
-    return Array.from(ids);
-  })();
+function extractDomainFromRpcParams(params) {
+  if (!params || params.model !== "crm.lead") return null;
+  if (!["search_read", "web_search_read", "search_count"].includes(params.method)) return null;
+  let domain = params.kwargs?.domain;
+  if (!domain && Array.isArray(params.args) && Array.isArray(params.args[0])) {
+    domain = params.args[0];
+  }
+  return Array.isArray(domain) ? domain : null;
 }
 
-async function scrapePageOpportunityIds(tabId) {
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    try {
+      if (!details.tabId || details.tabId < 0) return;
+      if (!details.url.includes("/web/dataset/call_kw")) return;
+      const raw = details.requestBody?.raw?.[0]?.bytes;
+      if (!raw) return;
+      const text = new TextDecoder("utf-8").decode(raw);
+      const payload = JSON.parse(text);
+      const domain = extractDomainFromRpcParams(payload?.params);
+      if (domain) {
+        latestPageDomainByTab.set(details.tabId, { domain, timestamp: Date.now() });
+      }
+    } catch (err) {
+      // Not JSON, not ours, or malformed — ignore and move on.
+    }
+  },
+  { urls: ["*://*/web/dataset/call_kw*"] },
+  ["requestBody"]
+);
+
+async function getActivePageDomain(tabId) {
   if (!tabId) {
     throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
   }
-  let results;
-  try {
-    results = await chrome.scripting.executeScript({ target: { tabId }, func: scrapeAllVisibleRecordIds });
-  } catch (err) {
+  const entry = latestPageDomainByTab.get(tabId);
+  if (!entry) {
     throw new Error(
-      "Couldn't read this page's records — make sure the CRM Pipeline tab (list or kanban view) is open, then try again."
+      "Haven't seen this page's search query yet — click a filter (or remove and re-add one), or switch pages once on the CRM tab, then try again."
     );
   }
-  const raw = results?.[0]?.result || [];
-  const ids = raw.map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id));
-  if (!ids.length) {
-    throw new Error(
-      "No records found on this page — make sure the CRM Pipeline tab (list or kanban view) is open, then try again."
-    );
-  }
-  return ids;
+  return entry.domain;
 }
 
-async function buildScopeDomain(baseUrl, scope) {
+async function buildScopeDomain(baseUrl, scope, tabId) {
+  if (scope === "page") {
+    return getActivePageDomain(tabId);
+  }
   const domain = [["type", "=", "opportunity"]];
   if (scope === "mine") {
     const uid = await getCurrentUserId(baseUrl);
@@ -160,27 +148,13 @@ async function buildScopeDomain(baseUrl, scope) {
 }
 
 async function countOpportunities(baseUrl, scope, tabId) {
-  if (scope === "page") {
-    const ids = await scrapePageOpportunityIds(tabId);
-    return ids.length;
-  }
-  const domain = await buildScopeDomain(baseUrl, scope);
+  const domain = await buildScopeDomain(baseUrl, scope, tabId);
   return odooRpcBg(baseUrl, "crm.lead", "search_count", [domain], {});
 }
 
 async function fetchAllOpportunities(baseUrl, scope, tabId, onProgress) {
   const fields = ["id", "name", "partner_id", "user_id", "stage_id", "expected_revenue"];
-
-  if (scope === "page") {
-    const ids = await scrapePageOpportunityIds(tabId);
-    const all = await odooRpcBg(baseUrl, "crm.lead", "search_read", [[["id", "in", ids]], fields], {
-      order: "id asc",
-    });
-    onProgress?.(all.length);
-    return all;
-  }
-
-  const domain = await buildScopeDomain(baseUrl, scope);
+  const domain = await buildScopeDomain(baseUrl, scope, tabId);
   let offset = 0;
   const all = [];
   for (;;) {

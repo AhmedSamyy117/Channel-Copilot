@@ -72,14 +72,15 @@ banner's English phrasing — displayed names pass through untouched.
   - "This view's filters" — matches *whatever* filters/facets you've
     actually applied on the CRM tab (e.g. "Assigned Partner = X", "Stage
     not = Won", combined with My Pipeline or not). This one works
-    differently: rather than reconstructing the search domain (calling
-    Odoo, or reading its internal state), it reads the record IDs directly
-    off whatever is already rendered on screen — the exact rows (list
-    view) or cards (kanban view) you're looking at — and pages through
-    the pager to collect every ID if there's more than one page. Nothing
-    on the page changes (no view switching, no filter clicks) beyond
-    paging forward and back to where you started if there's more than one
-    page.
+    differently: rather than calling Odoo, it passively observes the
+    network request Odoo's own web client already made to load that list
+    (a JSON-RPC POST to `/web/dataset/call_kw` for `crm.lead`) and reads
+    the domain straight out of that request's body — the exact domain
+    that produced what's on your screen. It's purely passive — nothing on
+    the page is touched. If it hasn't seen such a request yet from that
+    tab, you'll see "Haven't seen this page's search query yet"; clicking
+    a filter (or removing and re-adding one) or switching pages once on
+    the CRM tab gives it a fresh request to read.
   Below the selector, an opportunity count for the current scope is
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
@@ -104,12 +105,17 @@ banner's English phrasing — displayed names pass through untouched.
 - A transient Chrome error ("Tabs cannot be edited right now — user may be
   dragging a tab") is retried automatically a couple of times; a single
   record failing to check no longer aborts the whole scan.
-- **"This view's filters" scope reads record IDs directly off the
-  rendered page** (list rows' or kanban cards' `data-id` attributes),
-  paging through if there's more than one page, rather than reconstructing
-  Odoo's search domain. This means it needs the CRM tab's list or kanban
-  view to actually be showing rows/cards when you run it — an empty view,
-  a still-loading page, or a non-list/kanban view (e.g. calendar/pivot)
-  will report "No records found on this page." The "My Pipeline" and "All
-  opportunities" scopes don't have this requirement since they call
-  Odoo's RPC endpoint directly instead.
+- **"This view's filters" scope depends on having observed a network
+  request from that tab**: there's no public Odoo API for "give me the
+  search bar's current domain," so instead of calling Odoo directly, the
+  extension watches for the JSON-RPC request Odoo's own client already
+  sends to load the list/kanban data and reads the domain out of that
+  request body. This rides Odoo's actual wire protocol (stable across
+  versions) rather than internal JS structure or DOM markup, and doesn't
+  touch the page in any way. If it hasn't seen a matching request yet
+  (e.g. the tab was already open before the extension was reloaded), click
+  a filter (or remove and re-add one) or switch pages once on the CRM tab
+  — that makes Odoo issue a fresh request for it to observe — then run the
+  scan again. The "My Pipeline" and "All opportunities" scopes don't have
+  this requirement since they call Odoo's RPC endpoint directly
+  themselves.
