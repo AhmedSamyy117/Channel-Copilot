@@ -68,91 +68,62 @@ async function getCurrentUserId(baseUrl) {
   return uid;
 }
 
-// Injected into the actual CRM tab to read whatever filters/facets are
-// currently applied in Odoo's own search bar (e.g. "Assigned Partner = X",
-// "Stage not = Won"), not just the default "My Pipeline" chip. Odoo's web
-// client (OWL framework) keeps the live, fully-resolved domain on the
-// current view's searchModel — there's no public RPC for this, so this
-// reaches into the client's own component tree the same way Odoo devs do
-// from the browser console. It's undocumented internal state, so it can
-// break on a future Odoo upgrade; the "mine"/"all" scopes stay unaffected
-// since those go through stable, public RPC calls instead.
-function extractSearchDomainFromPage() {
-  function toDomainArray(raw) {
-    if (Array.isArray(raw)) return raw;
-    if (raw && typeof raw.toList === "function") {
-      try {
-        const list = raw.toList();
-        if (Array.isArray(list)) return list;
-      } catch (e) {
-        /* fall through */
-      }
-    }
-    return null;
+// "page" scope needs whatever filters/facets are currently applied in
+// Odoo's own search bar (e.g. "Assigned Partner = X", "Stage not = Won"),
+// not just the default "My Pipeline" chip. There's no public RPC for
+// "give me the current search domain," and reaching into Odoo's internal
+// OWL component state (reflection on __owl__) proved too fragile — it
+// failed to find the right internal shape on at least one real Odoo
+// build. Instead, this listens for the network requests Odoo's own web
+// client makes to load the list/kanban data (JSON-RPC POSTs to
+// /web/dataset/call_kw), and reads the domain straight out of the request
+// body Odoo itself sent. That RPC transport has been Odoo's stable wire
+// protocol for well over a decade, so this doesn't depend on any
+// version-specific internal JS structure.
+const latestPageDomainByTab = new Map(); // tabId -> { domain, timestamp }
+
+function extractDomainFromRpcParams(params) {
+  if (!params || params.model !== "crm.lead") return null;
+  if (!["search_read", "web_search_read", "search_count"].includes(params.method)) return null;
+  let domain = params.kwargs?.domain;
+  if (!domain && Array.isArray(params.args) && Array.isArray(params.args[0])) {
+    domain = params.args[0];
   }
-
-  // Every place a searchModel instance might realistically hang off an OWL
-  // component/env, across Odoo 16-18's various internal shapes. Not
-  // documented anywhere — reverse-engineered from what's actually been
-  // seen on __owl__ nodes in the wild, so more candidates is more robust.
-  function searchModelFrom(node) {
-    if (!node) return null;
-    const c = node.component;
-    return (
-      c?.env?.searchModel ||
-      c?.searchModel ||
-      c?.props?.searchModel ||
-      c?.env?.services?.search_model ||
-      null
-    );
-  }
-
-  try {
-    // 1) Ancestor walk from the main action container (fast path, works
-    // when the search model owner is a direct ancestor).
-    let el = document.querySelector(".o_action_manager") || document.body;
-    while (el) {
-      const model = searchModelFrom(el.__owl__);
-      if (model) {
-        const domain = toDomainArray(model.domain);
-        if (domain) return { ok: true, domain };
-      }
-      el = el.parentElement;
-    }
-
-    // 2) Broad scan: some Odoo versions attach the search model to a
-    // component that isn't an ancestor of .o_action_manager at all (e.g.
-    // a sibling control-panel component). Check every element on the page.
-    const all = document.querySelectorAll("*");
-    for (const node of all) {
-      const model = searchModelFrom(node.__owl__);
-      if (model) {
-        const domain = toDomainArray(model.domain);
-        if (domain) return { ok: true, domain };
-      }
-    }
-
-    return { ok: false };
-  } catch (err) {
-    return { ok: false };
-  }
+  return Array.isArray(domain) ? domain : null;
 }
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    try {
+      if (!details.tabId || details.tabId < 0) return;
+      if (!details.url.includes("/web/dataset/call_kw")) return;
+      const raw = details.requestBody?.raw?.[0]?.bytes;
+      if (!raw) return;
+      const text = new TextDecoder("utf-8").decode(raw);
+      const payload = JSON.parse(text);
+      const domain = extractDomainFromRpcParams(payload?.params);
+      if (domain) {
+        latestPageDomainByTab.set(details.tabId, { domain, timestamp: Date.now() });
+      }
+    } catch (err) {
+      // Not JSON, not ours, or malformed — ignore and move on.
+    }
+  },
+  { urls: ["*://*/web/dataset/call_kw*"] },
+  ["requestBody"]
+);
 
 async function getActivePageDomain(tabId) {
   if (!tabId) {
     throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
   }
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: extractSearchDomainFromPage,
-  });
-  const result = results?.[0]?.result;
-  if (!result?.ok) {
+  const entry = latestPageDomainByTab.get(tabId);
+  if (!entry) {
     throw new Error(
-      "Couldn't read this page's filters — make sure the CRM Pipeline tab (list or kanban view) is open, then try again."
+      "Haven't seen this page's search query yet — click a filter, refresh the list, or switch pages once on the CRM tab, then try again."
     );
   }
-  return result.domain;
+  return entry.domain;
 }
 
 async function buildScopeDomain(baseUrl, scope, tabId) {

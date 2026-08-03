@@ -61,10 +61,14 @@ banner's English phrasing — displayed names pass through untouched.
   - "This view's filters" — matches *whatever* filters/facets you've
     actually applied on the CRM tab (e.g. "Assigned Partner = X", "Stage
     not = Won", combined with My Pipeline or not). This one works
-    differently: it reads the live search domain straight out of Odoo's
-    own web client state on that tab (see caveat below), so switching to
-    it re-reads the domain fresh each time — including right before a scan
-    starts, in case you changed filters since the count was last shown.
+    differently: rather than calling Odoo, it passively observes the
+    network request Odoo's own web client already made to load that list
+    (a JSON-RPC POST to `/web/dataset/call_kw` for `crm.lead`) and reads
+    the domain straight out of that request's body — the exact domain
+    that produced what's on your screen. It needs to have seen at least
+    one such request from that tab; if you just installed/reloaded the
+    extension before the page's last load, click a filter or refresh the
+    list once so a fresh request fires.
   Below the selector, an opportunity count for the current scope is
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
@@ -89,12 +93,16 @@ banner's English phrasing — displayed names pass through untouched.
 - A transient Chrome error ("Tabs cannot be edited right now — user may be
   dragging a tab") is retried automatically a couple of times; a single
   record failing to check no longer aborts the whole scan.
-- **"This view's filters" scope is inherently fragile**: there's no public
-  Odoo API for "give me the search bar's current domain," so it reaches
-  into the web client's internal OWL component state (the same trick Odoo
-  developers use from the browser console) to read `searchModel.domain`.
-  This is undocumented internal structure, not a stable interface — a
-  future Odoo upgrade could change it and break this one scope (it would
-  show an error like "Couldn't read this page's filters" rather than
-  silently returning wrong data). The "My Pipeline" and "All opportunities"
-  scopes are unaffected since they only use stable, public RPC calls.
+- **"This view's filters" scope depends on having observed a network
+  request from that tab**: there's no public Odoo API for "give me the
+  search bar's current domain," so instead of calling Odoo directly, the
+  extension watches for the JSON-RPC request Odoo's own client already
+  sends to load the list/kanban data and reads the domain out of that
+  request body. This rides Odoo's actual wire protocol (stable across
+  versions) rather than internal JS structure, but it only works after
+  the extension has actually seen at least one matching request — if nothing
+  has loaded yet on that tab since the extension got permission, you'll see
+  "Haven't seen this page's search query yet"; clicking a filter or
+  refreshing the list once fixes it, since it's captured passively going
+  forward. The "My Pipeline" and "All opportunities" scopes don't have this
+  requirement since they call Odoo's RPC endpoint directly themselves.
