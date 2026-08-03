@@ -72,16 +72,14 @@ banner's English phrasing — displayed names pass through untouched.
   - "This view's filters" — matches *whatever* filters/facets you've
     actually applied on the CRM tab (e.g. "Assigned Partner = X", "Stage
     not = Won", combined with My Pipeline or not). This one works
-    differently: rather than calling Odoo, it passively observes the
-    network request Odoo's own web client already made to load that list
-    (a JSON-RPC POST to `/web/dataset/call_kw` for `crm.lead`) and reads
-    the domain straight out of that request's body — the exact domain
-    that produced what's on your screen. If it hasn't seen such a request
-    yet from that tab, it automatically toggles the view switcher (e.g.
-    Kanban → List → Kanban) and back, which makes Odoo reissue the exact
-    same search with the exact same filters — nothing on the page
-    changes — just to give itself a fresh request to read, so you
-    shouldn't normally need to do anything manually.
+    differently: rather than reconstructing the search domain (calling
+    Odoo, or reading its internal state), it reads the record IDs directly
+    off whatever is already rendered on screen — the exact rows (list
+    view) or cards (kanban view) you're looking at — and pages through
+    the pager to collect every ID if there's more than one page. Nothing
+    on the page changes (no view switching, no filter clicks) beyond
+    paging forward and back to where you started if there's more than one
+    page.
   Below the selector, an opportunity count for the current scope is
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
