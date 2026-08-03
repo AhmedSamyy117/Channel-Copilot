@@ -218,9 +218,4 @@ document.getElementById("optionsLink").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
-document.getElementById("dashboardLink").addEventListener("click", (e) => {
-  e.preventDefault();
-  chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
-});
-
 init();
