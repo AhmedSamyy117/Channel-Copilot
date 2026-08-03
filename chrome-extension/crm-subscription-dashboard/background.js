@@ -131,10 +131,20 @@ function textHasBanner(text) {
   return BANNER_PATTERNS.some((re) => re.test(text));
 }
 
-async function checkOpportunityBanner(baseUrl, id) {
+// Chrome throws "Tabs cannot be edited right now (user may be dragging a
+// tab)" if a tab operation lands at the wrong moment (e.g. the user is
+// mid-drag on the tab strip). It's transient — retrying a beat later almost
+// always succeeds — so we retry a couple of times before giving up on this
+// one record, rather than letting it escape and abort the whole scan.
+function isTransientTabError(err) {
+  return /dragging a tab|tabs cannot be edited/i.test(err?.message || "");
+}
+
+async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
   const url = `${baseUrl}/odoo/crm/${id}`;
-  const tab = await chrome.tabs.create({ url, active: false });
+  let tab;
   try {
+    tab = await chrome.tabs.create({ url, active: false });
     await waitForTabComplete(tab.id, TAB_LOAD_TIMEOUT_MS);
     await sleep(RENDER_SETTLE_MS);
     const [{ result }] = await chrome.scripting.executeScript({
@@ -143,9 +153,13 @@ async function checkOpportunityBanner(baseUrl, id) {
     });
     return textHasBanner(result?.text || "");
   } catch (err) {
-    return null; // couldn't determine — skip rather than false-flag
+    if (isTransientTabError(err) && attempt < 3) {
+      await sleep(1500 * attempt);
+      return checkOpportunityBanner(baseUrl, id, attempt + 1);
+    }
+    return null; // couldn't determine — skip rather than false-flag or abort
   } finally {
-    chrome.tabs.remove(tab.id).catch(() => {});
+    if (tab) chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 
@@ -170,7 +184,14 @@ async function runSubscriptionScan(baseUrl, scope) {
   for (let i = 0; i < total; i++) {
     if (scanCancelled) break;
     const opp = opportunities[i];
-    const hasBanner = await checkOpportunityBanner(trimmedBase, opp.id);
+    // A single record's check failing (transient tab error, page timeout,
+    // etc.) shouldn't abort the other 600+ — skip it and keep going.
+    let hasBanner;
+    try {
+      hasBanner = await checkOpportunityBanner(trimmedBase, opp.id);
+    } catch (err) {
+      hasBanner = null;
+    }
     if (hasBanner) {
       flagged.push({
         id: opp.id,
