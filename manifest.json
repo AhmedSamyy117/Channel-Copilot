@@ -3,8 +3,9 @@
   "name": "Channel Copilot",
   "version": "0.1.0",
   "description": "Extracts Odoo subscription data and runs a lightweight KYC lookup via the Claude API.",
-  "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
+  "permissions": ["storage", "activeTab", "scripting", "sidePanel", "tabs", "permissions"],
   "host_permissions": ["https://api.anthropic.com/*"],
+  "optional_host_permissions": ["*://*/*"],
   "background": {
     "service_worker": "background.js"
   },
