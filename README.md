@@ -3,6 +3,12 @@
 Chrome extension that reads an open Odoo Subscriptions page and runs a
 lightweight KYC lookup on the customer via the Claude API.
 
+See also the standalone tools in `chrome-extension/`:
+- `chrome-extension/crm-subscription-dashboard/` — flags opportunities
+  with a running/churned subscription.
+- `chrome-extension/crm-similar-leads-checker/` — reports each
+  opportunity's similar-leads count and stage breakdown.
+
 ## Load the extension
 
 1. `chrome://extensions` → enable Developer mode.

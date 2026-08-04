@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "CRM Similar Leads Checker",
+  "version": "0.1.0",
+  "description": "Scans the Odoo CRM pipeline and reports each opportunity's similar-leads count and stage breakdown.",
+  "permissions": ["storage", "scripting", "tabs", "permissions", "sidePanel", "webRequest"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CRM Similar Leads Checker"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

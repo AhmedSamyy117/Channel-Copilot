@@ -2,27 +2,6 @@ chrome.action.onClicked.addListener((tab) => {
   if (tab.id) chrome.sidePanel.open({ tabId: tab.id });
 });
 
-// Batch "Similar Leads" scan results come from a content script (no tabs
-// API access there), so it asks the background page to stash the data and
-// open the results tab.
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "OPEN_SIMILAR_LEADS_RESULTS") {
-    (async () => {
-      await chrome.storage.local.set({
-        similarLeadsResults: {
-          results: message.results,
-          origin: message.origin,
-          generatedAt: Date.now(),
-        },
-      });
-      await chrome.tabs.create({ url: chrome.runtime.getURL("similar_leads_results.html") });
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-  return false;
-});
-
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-5";
 const MAX_SEARCHES = 4;

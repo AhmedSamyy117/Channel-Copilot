@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>CRM Similar Leads Checker</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 14px;
+    color: #1f2430;
+    font-size: 13px;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .subtitle { font-size: 11px; color: #6b7280; margin-bottom: 12px; line-height: 1.4; }
+  .setup-box { background: #f8f7f9; border: 1px solid #e5e2e6; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .setup-box label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; margin-bottom: 4px; }
+  .setup-box input[type="text"] { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 8px; }
+  .detected-hint { font-size: 11px; color: #16a34a; margin-bottom: 8px; }
+  button { padding: 7px 12px; border: none; border-radius: 6px; background: #714b67; color: white; font-size: 12px; cursor: pointer; }
+  button.secondary { background: #e5e2e6; color: #1f2430; }
+  button.small { padding: 5px 9px; font-size: 11px; }
+  button:disabled { background: #b8a7b3; cursor: default; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+  input#filterInput { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; }
+  select { padding: 5px 6px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 6px; max-width: 47%; }
+  label.toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #1f2430; cursor: pointer; }
+  .status-bar { font-size: 11px; color: #6b7280; margin-bottom: 10px; }
+  .progress-track { height: 5px; background: #e5e2e6; border-radius: 3px; overflow: hidden; margin: 6px 0; }
+  .progress-fill { height: 100%; background: #714b67; width: 0%; transition: width 0.3s ease; }
+  .error-banner { background: #fdecec; border: 1px solid #f5b5b5; color: #b91c1c; padding: 8px 10px; border-radius: 6px; font-size: 11px; margin-bottom: 10px; display: none; }
+  .card { border: 1px solid #eee; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: white; }
+  .card .name { font-weight: 600; font-size: 12.5px; margin-bottom: 2px; }
+  .card .meta { font-size: 11px; color: #6b7280; margin-bottom: 4px; }
+  .card .count { font-size: 11px; color: #1f2430; font-weight: 600; }
+  .card .breakdown { font-size: 11px; color: #555; margin: 3px 0; }
+  .card a { font-size: 11px; color: #714b67; text-decoration: none; }
+  .card a:hover { text-decoration: underline; }
+  .empty-state { padding: 20px 10px; text-align: center; color: #6b7280; font-size: 12px; }
+  #flaggedCount { font-weight: 600; }
+  .scope-row { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
+  .scope-row select { flex: 1; max-width: none; }
+  #oppCountLine { font-size: 11px; color: #6b7280; margin-bottom: 10px; }
+  .filter-hint { font-size: 10.5px; color: #9ca3af; margin: -4px 0 10px; }
+</style>
+</head>
+<body>
+  <h1>CRM Similar Leads Checker</h1>
+  <div class="subtitle">
+    Opportunities that have Odoo-detected similar/duplicate leads, with a
+    stage breakdown for each — reusing Odoo's own "Similar Leads" match.
+  </div>
+
+  <div class="setup-box" id="setupBox" style="display:none;">
+    <div id="detectedHint" class="detected-hint" style="display:none;"></div>
+    <label for="baseUrlInput">Odoo base URL</label>
+    <input id="baseUrlInput" type="text" placeholder="https://yourcompany.odoo.com" />
+    <button id="saveBaseUrlBtn">Save &amp; grant access</button>
+  </div>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div class="scope-row">
+    <select id="scopeSelect">
+      <option value="mine">My Pipeline (matches the page's default filter)</option>
+      <option value="all">All opportunities (entire CRM)</option>
+      <option value="page">This view's filters (matches what's on screen now)</option>
+    </select>
+  </div>
+  <div id="oppCountLine">Opportunity count: —</div>
+
+  <div class="row">
+    <button id="scanBtn">Run scan</button>
+    <button id="cancelBtn" class="secondary small" style="display:none;">Cancel</button>
+    <button id="changeUrlBtn" class="secondary small">Change site</button>
+  </div>
+  <div class="row">
+    <label class="toggle"><input type="checkbox" id="excludeLostToggle" /> Exclude Lost from counts</label>
+  </div>
+  <div class="row">
+    <input id="filterInput" type="text" placeholder="Filter results by name / contact…" />
+  </div>
+  <div class="row">
+    <select id="salespersonFilter"><option value="">All salespeople (in results)</option></select>
+    <select id="stageFilter"><option value="">All stages (in results)</option></select>
+  </div>
+  <div class="filter-hint" id="filterHint" style="display:none;">
+    These narrow down the list below — they'll fill in once a scan finds results.
+  </div>
+
+  <div class="status-bar">
+    <div id="lastRefreshed">Never run yet.</div>
+    <div id="progressText"></div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="flaggedCount"></div>
+  </div>
+
+  <div class="row">
+    <button id="openResultsWindowBtn" class="secondary small">Open full results in a window</button>
+  </div>
+
+  <div id="resultsList"></div>
+  <div class="empty-state" id="emptyState" style="display:none;">
+    No opportunities with similar leads yet. Run a scan to populate this list.
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
