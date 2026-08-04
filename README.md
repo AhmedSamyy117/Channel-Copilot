@@ -29,6 +29,31 @@ and paste an Anthropic API key. The key is stored only in
   structured KYC summary: industry, establishment year, employee count,
   and any holding/sister companies found.
 
+## Similar Leads duplicate-checker
+
+`similar_leads.js` is auto-injected on every page (it no-ops instantly unless
+it detects an Odoo CRM opportunity form or list/kanban view) and:
+
+- On an opportunity form: reads the count off the native "Similar Leads"
+  smart button, then calls Odoo's own `crm.lead.action_similar_leads` server
+  method to get the exact duplicate-matching domain Odoo already computed
+  (email/phone/partner — whatever it is, we don't need to know), and does a
+  single (paginated) `search_read` with it. Renders an inline panel under the
+  smart button with the total and a per-stage breakdown, plus a persistent
+  "Exclude Lost" toggle (stored in `chrome.storage.local`, remembered across
+  opportunities).
+- On a CRM list/kanban view: adds a "Check Similar Leads (visible)" button to
+  the control panel toolbar. Clicking it scans every currently-loaded
+  record's similar leads the same way, then opens the results as a table in
+  a new tab (`similar_leads_results.html`) — one row per opportunity, sorted
+  by similar-lead count, with the stage breakdown and a link back to each
+  record.
+
+This declares a broad (`<all_urls>`) content script since the tool needs to
+appear automatically as you land on a page, unlike the on-demand KYC side
+panel — Chrome will show the corresponding "read/change data on all sites"
+permission warning.
+
 ## Notes / limitations
 
 - Field extraction is heuristic (label-text matching), since Odoo Studio
