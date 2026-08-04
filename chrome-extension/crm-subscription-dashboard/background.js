@@ -239,13 +239,57 @@ function isTransientTabError(err) {
   return /dragging a tab|tabs cannot be edited/i.test(err?.message || "");
 }
 
-// The banner itself is often computed by a second, async lookup (checking
-// the partner's subscriptions) that finishes after the rest of the form
-// has rendered — and since this is a hidden/background tab, Chrome throttles
-// its timers, so that lookup can take noticeably longer than in a normal
-// foreground tab. A single fixed-delay snapshot was missing real banners
-// that hadn't rendered in time yet.
+// The banner is computed by a second, async lookup (checking the partner's
+// subscriptions) that finishes after the rest of the form has rendered.
+// Opening each record as a hidden tab (`chrome.tabs.create({active: false})`)
+// in the user's own window meant it was never the active tab there — and
+// Odoo's client, like most web apps, gates non-essential async work behind
+// the page's visibility state, so that lookup may simply never fire at all
+// for a background tab, no matter how long we poll. That's why known-banner
+// records were still coming back unflagged even after adding polling.
 //
+// The fix: run the scan in a separate, unfocused browser *window* instead.
+// A tab that's the *active* tab of its own window reports as visible
+// (`document.visibilityState === "visible"`) even when that window isn't
+// focused at the OS level — so Odoo's page behaves exactly as it would if
+// the user had actually clicked into it, without ever stealing focus from
+// whatever the user is doing. One window/tab is created once for the whole
+// scan and reused (navigated) for every record, rather than opening and
+// closing a tab per record.
+let scanWindowId = null;
+let scanTabId = null;
+
+async function ensureScanWindow() {
+  if (scanWindowId != null && scanTabId != null) {
+    try {
+      await chrome.windows.get(scanWindowId);
+      return scanTabId;
+    } catch (err) {
+      // Window was closed (e.g. by the user) — fall through and recreate.
+      scanWindowId = null;
+      scanTabId = null;
+    }
+  }
+  const win = await chrome.windows.create({
+    url: "about:blank",
+    focused: false,
+    type: "normal",
+    width: 1000,
+    height: 800,
+  });
+  scanWindowId = win.id;
+  scanTabId = win.tabs[0].id;
+  return scanTabId;
+}
+
+async function closeScanWindow() {
+  if (scanWindowId != null) {
+    await chrome.windows.remove(scanWindowId).catch(() => {});
+  }
+  scanWindowId = null;
+  scanTabId = null;
+}
+
 // Rather than always waiting the full window (which would multiply total
 // scan time across 600+ records), poll repeatedly but stop early once the
 // page's text stops changing between two consecutive checks — a proxy for
@@ -258,17 +302,17 @@ const BANNER_STABLE_CHECKS_TO_STOP = 2;
 
 async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
   const url = `${baseUrl}/odoo/crm/${id}`;
-  let tab;
   try {
-    tab = await chrome.tabs.create({ url, active: false });
-    await waitForTabComplete(tab.id, TAB_LOAD_TIMEOUT_MS);
+    const tabId = await ensureScanWindow();
+    await chrome.tabs.update(tabId, { url });
+    await waitForTabComplete(tabId, TAB_LOAD_TIMEOUT_MS);
     await sleep(RENDER_SETTLE_MS);
 
     let lastText = null;
     let stableCount = 0;
     for (let poll = 0; poll < BANNER_POLL_MAX_ATTEMPTS; poll++) {
       const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
+        target: { tabId },
         func: scanPageForBanner,
       });
       if (pageHasBanner(result)) return true;
@@ -290,9 +334,11 @@ async function checkOpportunityBanner(baseUrl, id, attempt = 1) {
       await sleep(1500 * attempt);
       return checkOpportunityBanner(baseUrl, id, attempt + 1);
     }
+    // Something else went wrong with the scan window (e.g. it was closed
+    // mid-check) — drop it so the next record recreates a fresh one.
+    scanWindowId = null;
+    scanTabId = null;
     return null; // couldn't determine — skip rather than false-flag or abort
-  } finally {
-    if (tab) chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 
@@ -314,35 +360,39 @@ async function runSubscriptionScan(baseUrl, scope, tabId) {
   const total = opportunities.length;
   const flagged = [];
 
-  for (let i = 0; i < total; i++) {
-    if (scanCancelled) break;
-    const opp = opportunities[i];
-    // A single record's check failing (transient tab error, page timeout,
-    // etc.) shouldn't abort the other 600+ — skip it and keep going.
-    let hasBanner;
-    try {
-      hasBanner = await checkOpportunityBanner(trimmedBase, opp.id);
-    } catch (err) {
-      hasBanner = null;
-    }
-    if (hasBanner) {
-      flagged.push({
-        id: opp.id,
-        name: opp.name || "",
-        contact: Array.isArray(opp.partner_id) ? opp.partner_id[1] : "",
-        salesperson: Array.isArray(opp.user_id) ? opp.user_id[1] : "",
-        stage: Array.isArray(opp.stage_id) ? opp.stage_id[1] : "",
-        expectedRevenue: opp.expected_revenue || 0,
-        url: `${trimmedBase}/odoo/crm/${opp.id}`,
+  try {
+    for (let i = 0; i < total; i++) {
+      if (scanCancelled) break;
+      const opp = opportunities[i];
+      // A single record's check failing (transient tab error, page timeout,
+      // etc.) shouldn't abort the other 600+ — skip it and keep going.
+      let hasBanner;
+      try {
+        hasBanner = await checkOpportunityBanner(trimmedBase, opp.id);
+      } catch (err) {
+        hasBanner = null;
+      }
+      if (hasBanner) {
+        flagged.push({
+          id: opp.id,
+          name: opp.name || "",
+          contact: Array.isArray(opp.partner_id) ? opp.partner_id[1] : "",
+          salesperson: Array.isArray(opp.user_id) ? opp.user_id[1] : "",
+          stage: Array.isArray(opp.stage_id) ? opp.stage_id[1] : "",
+          expectedRevenue: opp.expected_revenue || 0,
+          url: `${trimmedBase}/odoo/crm/${opp.id}`,
+        });
+        await chrome.storage.local.set({ [RESULTS_KEY]: flagged });
+      }
+
+      await chrome.storage.local.set({
+        [SCAN_STATE_KEY]: { status: "scanning", checked: i + 1, total, flagged: flagged.length },
       });
-      await chrome.storage.local.set({ [RESULTS_KEY]: flagged });
+
+      await sleep(BETWEEN_RECORD_DELAY_MS);
     }
-
-    await chrome.storage.local.set({
-      [SCAN_STATE_KEY]: { status: "scanning", checked: i + 1, total, flagged: flagged.length },
-    });
-
-    await sleep(BETWEEN_RECORD_DELAY_MS);
+  } finally {
+    await closeScanWindow();
   }
 
   await chrome.storage.local.set({
