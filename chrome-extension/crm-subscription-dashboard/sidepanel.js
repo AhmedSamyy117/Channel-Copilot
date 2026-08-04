@@ -23,6 +23,7 @@ const resultsList = document.getElementById("resultsList");
 const emptyState = document.getElementById("emptyState");
 const scopeSelect = document.getElementById("scopeSelect");
 const oppCountLine = document.getElementById("oppCountLine");
+const filterHint = document.getElementById("filterHint");
 
 let allResults = [];
 let detectedOrigin = null;
@@ -205,7 +206,7 @@ function populateFilterOptions() {
   const stages = [...new Set(allResults.map((r) => r.stage).filter(Boolean))].sort();
 
   const prevSp = salespersonFilter.value;
-  salespersonFilter.innerHTML = '<option value="">All salespeople</option>';
+  salespersonFilter.innerHTML = '<option value="">All salespeople (in results)</option>';
   for (const sp of salespeople) {
     const opt = document.createElement("option");
     opt.value = sp;
@@ -215,7 +216,7 @@ function populateFilterOptions() {
   salespersonFilter.value = salespeople.includes(prevSp) ? prevSp : "";
 
   const prevStage = stageFilter.value;
-  stageFilter.innerHTML = '<option value="">All stages</option>';
+  stageFilter.innerHTML = '<option value="">All stages (in results)</option>';
   for (const st of stages) {
     const opt = document.createElement("option");
     opt.value = st;
@@ -223,6 +224,11 @@ function populateFilterOptions() {
     stageFilter.appendChild(opt);
   }
   stageFilter.value = stages.includes(prevStage) ? prevStage : "";
+
+  // These dropdowns are populated from scan results, not the whole
+  // pipeline — empty right after opening the panel (before any scan has
+  // flagged anything) isn't a bug, but it reads like one, so spell it out.
+  filterHint.style.display = allResults.length === 0 ? "block" : "none";
 }
 
 function escapeHtml(text) {
@@ -335,11 +341,27 @@ scanBtn.addEventListener("click", async () => {
   scanBtn.disabled = true;
   cancelBtn.style.display = "inline-block";
   const tabId = scopeSelect.value === "page" ? await getActiveCrmTabId() : null;
-  chrome.runtime.sendMessage({ type: "START_SUBSCRIPTION_SCAN", baseUrl, scope: scopeSelect.value, tabId });
+  // A callback is required here: without one, a background-service-worker
+  // hiccup (asleep, still starting up, or a genuine error) fails silently —
+  // the button stays disabled with no feedback, looking permanently stuck.
+  chrome.runtime.sendMessage(
+    { type: "START_SUBSCRIPTION_SCAN", baseUrl, scope: scopeSelect.value, tabId },
+    () => {
+      if (chrome.runtime.lastError) {
+        showError(`Couldn't start the scan: ${chrome.runtime.lastError.message}. Try again in a moment.`);
+        scanBtn.disabled = false;
+        cancelBtn.style.display = "none";
+      }
+    }
+  );
 });
 
 cancelBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "CANCEL_SUBSCRIPTION_SCAN" });
+  chrome.runtime.sendMessage({ type: "CANCEL_SUBSCRIPTION_SCAN" }, () => {
+    if (chrome.runtime.lastError) {
+      showError(`Couldn't cancel: ${chrome.runtime.lastError.message}.`);
+    }
+  });
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

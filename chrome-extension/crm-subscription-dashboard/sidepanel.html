@@ -175,6 +175,11 @@
     color: #6b7280;
     margin-bottom: 10px;
   }
+  .filter-hint {
+    font-size: 10.5px;
+    color: #9ca3af;
+    margin: -4px 0 10px;
+  }
 </style>
 </head>
 <body>
@@ -208,11 +213,14 @@
     <button id="changeUrlBtn" class="secondary small">Change site</button>
   </div>
   <div class="row">
-    <input id="filterInput" type="text" placeholder="Filter by name / contact…" />
+    <input id="filterInput" type="text" placeholder="Filter flagged results by name / contact…" />
   </div>
   <div class="row">
-    <select id="salespersonFilter"><option value="">All salespeople</option></select>
-    <select id="stageFilter"><option value="">All stages</option></select>
+    <select id="salespersonFilter"><option value="">All salespeople (in results)</option></select>
+    <select id="stageFilter"><option value="">All stages (in results)</option></select>
+  </div>
+  <div class="filter-hint" id="filterHint" style="display:none;">
+    These narrow down the flagged list below — they'll fill in once a scan finds results.
   </div>
 
   <div class="status-bar">
