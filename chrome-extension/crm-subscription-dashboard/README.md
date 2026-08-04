@@ -112,10 +112,15 @@ banner's English phrasing — displayed names pass through untouched.
   sends to load the list/kanban data and reads the domain out of that
   request body. This rides Odoo's actual wire protocol (stable across
   versions) rather than internal JS structure or DOM markup, and doesn't
-  touch the page in any way. If it hasn't seen a matching request yet
-  (e.g. the tab was already open before the extension was reloaded), click
-  a filter (or remove and re-add one) or switch pages once on the CRM tab
-  — that makes Odoo issue a fresh request for it to observe — then run the
-  scan again. The "My Pipeline" and "All opportunities" scopes don't have
-  this requirement since they call Odoo's RPC endpoint directly
-  themselves.
+  touch the page in any way. A CRM page fires more than one `crm.lead`
+  request though (KPI tiles, activity counters, etc. query it too), so
+  only `web_search_read` calls are considered (the one the list/kanban
+  renderer itself makes), and among those, whichever asked for the most
+  fields — the real view requests every visible column, a summary widget
+  only asks for a handful — to avoid locking onto the wrong one. If it
+  hasn't seen a matching request yet (e.g. the tab was already open before
+  the extension was reloaded), click a filter (or remove and re-add one)
+  or switch pages once on the CRM tab — that makes Odoo issue a fresh
+  request for it to observe — then run the scan again. The "My Pipeline"
+  and "All opportunities" scopes don't have this requirement since they
+  call Odoo's RPC endpoint directly themselves.

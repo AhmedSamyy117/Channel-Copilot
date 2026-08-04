@@ -89,16 +89,29 @@ async function getCurrentUserId(baseUrl) {
 // interact with the page once yourself — click a filter, remove/re-add
 // one, or switch pages — which makes Odoo issue a fresh request for the
 // listener to catch.
-const latestPageDomainByTab = new Map(); // tabId -> { domain, timestamp }
+const latestPageDomainByTab = new Map(); // tabId -> { domain, fieldCount, timestamp }
 
-function extractDomainFromRpcParams(params) {
-  if (!params || params.model !== "crm.lead") return null;
-  if (!["search_read", "web_search_read", "search_count"].includes(params.method)) return null;
-  let domain = params.kwargs?.domain;
-  if (!domain && Array.isArray(params.args) && Array.isArray(params.args[0])) {
-    domain = params.args[0];
-  }
-  return Array.isArray(domain) ? domain : null;
+// A CRM page fires more than one crm.lead RPC — the main list/kanban call
+// that renders what you're looking at, but also assorted background
+// widgets (KPI tiles, activity counters, etc.) that also query crm.lead,
+// often via search_count or a web_search_read with a handful of fields for
+// a summary number. Grabbing whichever request happens to land last was
+// picking up one of those side calls instead of the real one, matching
+// nothing visible on screen.
+//
+// So this only looks at "web_search_read" — the call the list/kanban
+// renderer itself makes — and, since more than one web_search_read can
+// still fire (sub-widgets use it too), keeps whichever one requested the
+// most fields. The real view's data call asks for every visible column
+// (typically a dozen-plus fields); a KPI/summary widget asks for a
+// handful. Field count is a solid proxy for "this is the real one."
+function extractCandidateFromRpcParams(params) {
+  if (!params || params.model !== "crm.lead" || params.method !== "web_search_read") return null;
+  const domain = params.kwargs?.domain;
+  if (!Array.isArray(domain)) return null;
+  const spec = params.kwargs?.specification;
+  const fieldCount = spec && typeof spec === "object" ? Object.keys(spec).length : 0;
+  return { domain, fieldCount };
 }
 
 chrome.webRequest.onBeforeRequest.addListener(
@@ -110,9 +123,17 @@ chrome.webRequest.onBeforeRequest.addListener(
       if (!raw) return;
       const text = new TextDecoder("utf-8").decode(raw);
       const payload = JSON.parse(text);
-      const domain = extractDomainFromRpcParams(payload?.params);
-      if (domain) {
-        latestPageDomainByTab.set(details.tabId, { domain, timestamp: Date.now() });
+      const candidate = extractCandidateFromRpcParams(payload?.params);
+      if (!candidate) return;
+
+      const existing = latestPageDomainByTab.get(details.tabId);
+      const isStale = !existing || Date.now() - existing.timestamp > 4000;
+      if (isStale || candidate.fieldCount >= existing.fieldCount) {
+        latestPageDomainByTab.set(details.tabId, {
+          domain: candidate.domain,
+          fieldCount: candidate.fieldCount,
+          timestamp: Date.now(),
+        });
       }
     } catch (err) {
       // Not JSON, not ours, or malformed — ignore and move on.
