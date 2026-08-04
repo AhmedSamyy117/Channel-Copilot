@@ -117,18 +117,29 @@ function triggerSearchRefreshOnPage() {
   }
 }
 
+// A single nudge attempt (focus search box, press Enter, wait ~900ms) was
+// found to sometimes miss: the synthetic keypress can race with Odoo's own
+// search-widget JS, especially right when the extension's service worker
+// has just woken up and its webRequest listener is only freshly attached.
+// Retrying a few times with a growing delay, instead of failing after one
+// shot, means the user doesn't have to notice the failure and click "Run
+// scan" again themselves — the same recovery just happens automatically.
+const PAGE_DOMAIN_NUDGE_ATTEMPTS = 4;
+const PAGE_DOMAIN_NUDGE_DELAYS_MS = [700, 1000, 1400, 1800];
+
 async function getActivePageDomain(tabId) {
   if (!tabId) {
     throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
   }
   let entry = latestPageDomainByTab.get(tabId);
-  if (!entry) {
+  for (let attempt = 0; !entry && attempt < PAGE_DOMAIN_NUDGE_ATTEMPTS; attempt++) {
     try {
       await chrome.scripting.executeScript({ target: { tabId }, func: triggerSearchRefreshOnPage });
     } catch (err) {
-      // Injection can fail (e.g. tab navigated away) — fall through below.
+      // Injection can fail (e.g. tab navigated away) — fall through below
+      // and just try again on the next attempt.
     }
-    await sleep(900);
+    await sleep(PAGE_DOMAIN_NUDGE_DELAYS_MS[attempt]);
     entry = latestPageDomainByTab.get(tabId);
   }
   if (!entry) {
