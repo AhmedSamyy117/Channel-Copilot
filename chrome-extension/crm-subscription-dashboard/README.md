@@ -88,10 +88,17 @@ banner's English phrasing — displayed names pass through untouched.
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
   total before running the slower per-record scan.
-- Filterable by salesperson, stage, or a text search over name/contact;
+- **Results filters** (name/contact text, salesperson, stage) narrow down
+  the flagged list that a completed scan produced — they're populated from
+  scan results, not the raw pipeline, so they'll show "(in results)" and
+  stay empty until a scan actually flags something. The list itself is
   sorted by expected revenue, highest first.
 - "Last refreshed" timestamp and a "Run scan" button — re-run any time to
   refresh. "Cancel" stops a scan in progress.
+- **"Export CSV"** (appears once a scan has flagged anything) downloads
+  every flagged opportunity — name, link back to the record in Odoo,
+  salesperson, and stage — as a CSV file, independent of whatever the
+  results filters above are currently narrowed down to.
 - Results persist in `chrome.storage.local`, so reopening the panel shows
   the last completed scan immediately without waiting.
 

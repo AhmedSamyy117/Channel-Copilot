@@ -24,6 +24,7 @@ const emptyState = document.getElementById("emptyState");
 const scopeSelect = document.getElementById("scopeSelect");
 const oppCountLine = document.getElementById("oppCountLine");
 const filterHint = document.getElementById("filterHint");
+const exportCsvBtn = document.getElementById("exportCsvBtn");
 
 let allResults = [];
 let detectedOrigin = null;
@@ -229,6 +230,7 @@ function populateFilterOptions() {
   // pipeline — empty right after opening the panel (before any scan has
   // flagged anything) isn't a bug, but it reads like one, so spell it out.
   filterHint.style.display = allResults.length === 0 ? "block" : "none";
+  exportCsvBtn.style.display = allResults.length === 0 ? "none" : "inline-block";
 }
 
 function escapeHtml(text) {
@@ -236,6 +238,33 @@ function escapeHtml(text) {
   div.textContent = text ?? "";
   return div.innerHTML;
 }
+
+function escapeCsvField(value) {
+  const str = String(value ?? "");
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+// Exports every flagged opportunity (not just what's currently filtered in
+// the panel) — this is meant as the full takeaway from a scan, not a view
+// of whatever happens to be on screen.
+function exportResultsToCsv() {
+  const header = ["Opportunity", "Link", "Salesperson", "Stage"];
+  const rows = allResults.map((r) => [r.name, r.url, r.salesperson, r.stage]);
+  const csv = [header, ...rows].map((row) => row.map(escapeCsvField).join(",")).join("\r\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  a.href = url;
+  a.download = `crm-subscription-flags-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+exportCsvBtn.addEventListener("click", exportResultsToCsv);
 
 function renderList() {
   const term = filterInput.value.trim().toLowerCase();
