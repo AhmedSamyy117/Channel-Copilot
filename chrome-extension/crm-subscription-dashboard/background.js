@@ -6,8 +6,8 @@
 // "40 per page" UI pagination entirely. Odoo doesn't expose the running/
 // churned-subscription banner as a filterable field or a discrete RPC call
 // we could find, so per the brute-force fallback we open each opportunity's
-// form view in a hidden background tab and read the banner off the
-// rendered page, same as a human would.
+// form view (in an unfocused scan window, see below) and read the banner
+// off the rendered page, same as a human would.
 
 const SCAN_STATE_KEY = "subscriptionScanState";
 const RESULTS_KEY = "subscriptionScanResults";

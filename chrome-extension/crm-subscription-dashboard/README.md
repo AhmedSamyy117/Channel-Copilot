@@ -99,9 +99,9 @@ banner's English phrasing — displayed names pass through untouched.
 - The banner text-match assumes the phrasing stays roughly stable — if
   Odoo renders it differently in some locale/version, a record could be
   under-flagged (missed) rather than false-flagged.
-- Because this brute-forces one hidden tab per opportunity, it's slower
-  than a true RPC-based check would be — accepted tradeoff since no such
-  RPC/field shortcut was found.
+- Because this brute-forces one page load per opportunity in a scan
+  window, it's slower than a true RPC-based check would be — accepted
+  tradeoff since no such RPC/field shortcut was found.
 - A transient Chrome error ("Tabs cannot be edited right now — user may be
   dragging a tab") is retried automatically a couple of times; a single
   record failing to check no longer aborts the whole scan.
