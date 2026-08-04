@@ -72,15 +72,18 @@ banner's English phrasing — displayed names pass through untouched.
   - "This view's filters" — matches *whatever* filters/facets you've
     actually applied on the CRM tab (e.g. "Assigned Partner = X", "Stage
     not = Won", combined with My Pipeline or not). This one works
-    differently: rather than calling Odoo, it passively observes the
-    network request Odoo's own web client already made to load that list
-    (a JSON-RPC POST to `/web/dataset/call_kw` for `crm.lead`) and reads
-    the domain straight out of that request's body — the exact domain
-    that produced what's on your screen. It's purely passive — nothing on
-    the page is touched. If it hasn't seen such a request yet from that
-    tab, you'll see "Haven't seen this page's search query yet"; clicking
-    a filter (or removing and re-adding one) or switching pages once on
-    the CRM tab gives it a fresh request to read.
+    differently: it observes the network request Odoo's own web client
+    already made to load that list (a JSON-RPC POST to
+    `/web/dataset/call_kw` for `crm.lead`) and reads the domain straight
+    out of that request's body — the exact domain that produced what's on
+    your screen. That observation only catches requests made *after* the
+    listener starts, so a tab that's been sitting untouched (e.g. right
+    after the extension reloaded) has nothing to observe yet — rather than
+    asking you to click something first, the extension nudges it itself:
+    it focuses the search bar and presses Enter, which makes Odoo reissue
+    the exact same query with the exact same filters (nothing visibly
+    changes beyond a brief cursor blink in the search box), giving itself
+    a fresh request to read.
   Below the selector, an opportunity count for the current scope is
   fetched immediately (`search_count` for the first two scopes; live
   domain read + `search_count` for "This view's filters") so you see the
@@ -105,22 +108,23 @@ banner's English phrasing — displayed names pass through untouched.
 - A transient Chrome error ("Tabs cannot be edited right now — user may be
   dragging a tab") is retried automatically a couple of times; a single
   record failing to check no longer aborts the whole scan.
-- **"This view's filters" scope depends on having observed a network
-  request from that tab**: there's no public Odoo API for "give me the
-  search bar's current domain," so instead of calling Odoo directly, the
-  extension watches for the JSON-RPC request Odoo's own client already
-  sends to load the list/kanban data and reads the domain out of that
-  request body. This rides Odoo's actual wire protocol (stable across
-  versions) rather than internal JS structure or DOM markup, and doesn't
-  touch the page in any way. A CRM page fires more than one `crm.lead`
-  request though (KPI tiles, activity counters, etc. query it too), so
-  only `web_search_read` calls are considered (the one the list/kanban
-  renderer itself makes), and among those, whichever asked for the most
-  fields — the real view requests every visible column, a summary widget
-  only asks for a handful — to avoid locking onto the wrong one. If it
-  hasn't seen a matching request yet (e.g. the tab was already open before
-  the extension was reloaded), click a filter (or remove and re-add one)
-  or switch pages once on the CRM tab — that makes Odoo issue a fresh
-  request for it to observe — then run the scan again. The "My Pipeline"
-  and "All opportunities" scopes don't have this requirement since they
-  call Odoo's RPC endpoint directly themselves.
+- **"This view's filters" scope reads the domain from a network request
+  Odoo's own client already sends**: there's no public Odoo API for "give
+  me the search bar's current domain," so instead of calling Odoo
+  directly, the extension watches for the JSON-RPC request Odoo's own
+  client sends to load the list/kanban data and reads the domain out of
+  that request body. This rides Odoo's actual wire protocol (stable
+  across versions) rather than internal JS structure or DOM markup. A CRM
+  page fires more than one `crm.lead` request though (KPI tiles, activity
+  counters, etc. query it too), so only `web_search_read` calls are
+  considered (the one the list/kanban renderer itself makes), and among
+  those, whichever asked for the most fields — the real view requests
+  every visible column, a summary widget only asks for a handful — to
+  avoid locking onto the wrong one. If no such request has been observed
+  yet (e.g. the tab was already open before the extension reloaded), the
+  extension nudges one itself — focusing the search bar and pressing
+  Enter, which makes Odoo reissue the same query with the same filters —
+  rather than requiring you to click something first; this happens
+  automatically the first time "This view's filters" is used against a
+  tab. The "My Pipeline" and "All opportunities" scopes don't have this
+  requirement since they call Odoo's RPC endpoint directly themselves.

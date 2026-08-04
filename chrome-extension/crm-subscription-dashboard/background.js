@@ -143,14 +143,46 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["requestBody"]
 );
 
+// Passive observation only catches requests made *after* the listener
+// started — a tab that was already open and hasn't been touched since
+// (e.g. right after the extension reloaded) has nothing to observe, and
+// asking the user to manually click a filter every single time was the
+// wrong tradeoff. Instead, nudge the page ourselves: focus the search bar
+// and press Enter. Odoo treats that as "commit the search" and reissues
+// the exact same query with the exact same filters — nothing about the
+// filters, the view, or the scroll position changes, just a brief cursor
+// blink in the search box — which gives the listener above a fresh
+// request to read.
+function triggerSearchRefreshOnPage() {
+  try {
+    const input = document.querySelector(".o_searchview_input, .o_searchview input[type='text']");
+    if (!input) return { ok: false };
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false };
+  }
+}
+
 async function getActivePageDomain(tabId) {
   if (!tabId) {
     throw new Error("No CRM tab found — open the Odoo Pipeline page and try again.");
   }
-  const entry = latestPageDomainByTab.get(tabId);
+  let entry = latestPageDomainByTab.get(tabId);
+  if (!entry) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, func: triggerSearchRefreshOnPage });
+    } catch (err) {
+      // Injection can fail (e.g. tab navigated away) — fall through to the
+      // error below rather than throwing an unrelated one here.
+    }
+    await sleep(900);
+    entry = latestPageDomainByTab.get(tabId);
+  }
   if (!entry) {
     throw new Error(
-      "Haven't seen this page's search query yet — click a filter (or remove and re-add one), or switch pages once on the CRM tab, then try again."
+      "Couldn't read this page's filters — make sure the CRM Pipeline tab (list or kanban view, with the search bar visible) is the active tab, then try again."
     );
   }
   return entry.domain;
