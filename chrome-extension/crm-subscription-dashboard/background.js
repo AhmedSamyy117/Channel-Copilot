@@ -79,16 +79,14 @@ async function getCurrentUserId(baseUrl) {
 // correspond to what's expected, and an auto-nudge that toggled the view
 // switcher to force a fresh request was visibly disruptive).
 //
-// This instead passively watches the network requests Odoo's own web
-// client already makes to load the list/kanban data (JSON-RPC POSTs to
+// This instead watches the network requests Odoo's own web client already
+// makes to load the list/kanban data (JSON-RPC POSTs to
 // /web/dataset/call_kw) and reads the domain straight out of the request
 // body Odoo itself sent — the exact domain that produced what's on
-// screen. It's purely passive: nothing on the page is touched. If no such
-// request has been observed yet from that tab (e.g. the page loaded
-// before the extension was ready to listen), the fix is simply to
-// interact with the page once yourself — click a filter, remove/re-add
-// one, or switch pages — which makes Odoo issue a fresh request for the
-// listener to catch.
+// screen. If no such request has been observed yet from that tab (e.g.
+// the page loaded before the extension was ready to listen), it nudges
+// one itself instead of requiring the user to interact first — see
+// triggerSearchRefreshOnPage() below.
 const latestPageDomainByTab = new Map(); // tabId -> { domain, fieldCount, timestamp }
 
 // A CRM page fires more than one crm.lead RPC — the main list/kanban call
