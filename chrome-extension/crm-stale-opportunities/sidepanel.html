@@ -1,0 +1,240 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>CRM Stale Opportunities</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 14px;
+    color: #1f2430;
+    font-size: 13px;
+  }
+  h1 {
+    font-size: 15px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 12px;
+    line-height: 1.4;
+  }
+  .setup-box {
+    background: #f8f7f9;
+    border: 1px solid #e5e2e6;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .setup-box label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+    margin-bottom: 4px;
+  }
+  .setup-box input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    font-size: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    margin-bottom: 8px;
+  }
+  .detected-hint {
+    font-size: 11px;
+    color: #16a34a;
+    margin-bottom: 8px;
+  }
+  button {
+    padding: 7px 12px;
+    border: none;
+    border-radius: 6px;
+    background: #714b67;
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #e5e2e6;
+    color: #1f2430;
+  }
+  button.small {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+  button:disabled {
+    background: #b8a7b3;
+    cursor: default;
+  }
+  .row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+  input#filterInput {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    font-size: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+  }
+  select {
+    padding: 5px 6px;
+    font-size: 11px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    max-width: 47%;
+  }
+  .status-bar {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
+  .progress-track {
+    height: 5px;
+    background: #e5e2e6;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 6px 0;
+  }
+  .progress-fill {
+    height: 100%;
+    background: #714b67;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  .error-banner {
+    background: #fdecec;
+    border: 1px solid #f5b5b5;
+    color: #b91c1c;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    margin-bottom: 10px;
+    display: none;
+  }
+  .card {
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: white;
+  }
+  .card .name {
+    font-weight: 600;
+    font-size: 12.5px;
+    margin-bottom: 2px;
+  }
+  .card .meta {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 4px;
+  }
+  .card .stale-line {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .card .stale-line.warn {
+    color: #b45309;
+  }
+  .card .stale-line.critical {
+    color: #b91c1c;
+  }
+  .card .revenue {
+    font-size: 11px;
+    color: #1f2430;
+    font-weight: 600;
+  }
+  .card a {
+    font-size: 11px;
+    color: #714b67;
+    text-decoration: none;
+  }
+  .card a:hover {
+    text-decoration: underline;
+  }
+  .empty-state {
+    padding: 20px 10px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 12px;
+  }
+  #flaggedCount {
+    font-weight: 600;
+  }
+  #oppCountLine {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
+  .filter-hint {
+    font-size: 10.5px;
+    color: #9ca3af;
+    margin: -4px 0 10px;
+  }
+</style>
+</head>
+<body>
+  <h1>CRM Stale Opportunities</h1>
+  <div class="subtitle">
+    Open-pipeline opportunities in the CRM view/filter currently on screen
+    with no update or logged activity in 30+ days. Lost and Won stages are
+    always excluded.
+  </div>
+
+  <div class="setup-box" id="setupBox" style="display:none;">
+    <div id="detectedHint" class="detected-hint" style="display:none;"></div>
+    <label for="baseUrlInput">Odoo base URL</label>
+    <input id="baseUrlInput" type="text" placeholder="https://yourcompany.odoo.com" />
+    <button id="saveBaseUrlBtn">Save &amp; grant access</button>
+  </div>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div id="oppCountLine">Opportunities in this view: —</div>
+
+  <div class="row">
+    <button id="scanBtn">Run scan</button>
+    <button id="cancelBtn" class="secondary small" style="display:none;">Cancel</button>
+    <button id="changeUrlBtn" class="secondary small">Change site</button>
+  </div>
+  <div class="row">
+    <input id="filterInput" type="text" placeholder="Filter flagged results by name / contact…" />
+  </div>
+  <div class="row">
+    <select id="salespersonFilter"><option value="">All salespeople (in results)</option></select>
+    <select id="stageFilter"><option value="">All stages (in results)</option></select>
+  </div>
+  <div class="filter-hint" id="filterHint" style="display:none;">
+    These narrow down the flagged list below — they'll fill in once a scan finds results.
+  </div>
+
+  <div class="status-bar">
+    <div id="lastRefreshed">Never run yet.</div>
+    <div id="progressText"></div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="flaggedCount"></div>
+  </div>
+
+  <div class="row">
+    <button id="exportCsvBtn" class="secondary small" style="display:none;">Export CSV</button>
+  </div>
+
+  <div id="resultsList"></div>
+  <div class="empty-state" id="emptyState" style="display:none;">
+    No stale opportunities found yet. Open the CRM list view/filter you want
+    to scan, then run a scan.
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

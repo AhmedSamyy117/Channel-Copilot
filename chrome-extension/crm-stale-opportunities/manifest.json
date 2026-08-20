@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "CRM Stale Opportunities",
+  "version": "0.1.0",
+  "description": "Scans the current Odoo CRM list view/filter and lists open opportunities with no update or logged activity in 30+ days.",
+  "permissions": ["storage", "scripting", "tabs", "permissions", "sidePanel", "webRequest"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CRM Stale Opportunities"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
